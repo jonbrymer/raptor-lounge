@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>🥷 Ninja Fruit Cutter</title>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/hands.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1640029074/camera_utils.js" crossorigin="anonymous"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Zen+Dots&family=Noto+Sans+JP:wght@400;700&display=swap');
+
+  *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+  html,body{width:100%;height:100%;overflow:hidden;background:#000}
+
+  #app{
+    position:fixed;inset:0;
+    font-family:'Noto Sans JP',sans-serif;
+  }
+
+  /* ── CAMERA LAYER ── */
+  #videoEl{
+    position:absolute;inset:0;
+    width:100%;height:100%;
+    object-fit:cover;
+    transform:scaleX(-1);
+    filter:brightness(0.6) saturate(1.1);
+  }
+
+  /* ── GAME CANVAS (overlay) ── */
+  #gameCanvas{
+    position:absolute;inset:0;
+    width:100%;height:100%;
+    pointer-events:none;
+  }
+
+  /* ── HUD ── */
+  #hud{
+    position:absolute;top:0;left:0;right:0;
+    display:flex;justify-content:space-between;align-items:flex-start;
+    padding:18px 28px;
+    background:linear-gradient(180deg,rgba(0,0,0,0.65) 0%,transparent 100%);
+    pointer-events:none;
+    z-index:10;
+    display:none;
+  }
+
+  #score-wrap{
+    display:flex;flex-direction:column;gap:2px;
+  }
+  #score-label{
+    font-family:'Zen Dots',monospace;
+    font-size:11px;letter-spacing:3px;color:rgba(255,220,100,0.7);
+    text-transform:uppercase;
+  }
+  #score-val{
+    font-family:'Zen Dots',monospace;
+    font-size:42px;color:#fff;line-height:1;
+    text-shadow:0 0 30px rgba(255,200,50,0.7);
+  }
+
+  #missed-wrap{
+    display:flex;flex-direction:column;align-items:flex-end;gap:4px;
+  }
+  #missed-label{
+    font-family:'Zen Dots',monospace;
+    font-size:11px;letter-spacing:3px;color:rgba(255,100,100,0.7);
+    text-transform:uppercase;
+  }
+  #missed-icons{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;max-width:240px;}
+  .missed-dot{
+    width:14px;height:14px;border-radius:50%;
+    background:rgba(255,255,255,0.15);
+    border:1.5px solid rgba(255,255,255,0.2);
+    transition:all 0.3s;
+  }
+  .missed-dot.hit{
+    background:#ff3333;
+    border-color:#ff6666;
+    box-shadow:0 0 8px #ff3333;
+  }
+
+  /* ── COMBO ── */
+  #combo-display{
+    position:absolute;top:90px;left:50%;
+    transform:translateX(-50%);
+    font-family:'Zen Dots',monospace;
+    font-size:28px;color:#ffd700;
+    text-shadow:0 0 20px rgba(255,215,0,0.9),0 0 40px rgba(255,150,0,0.5);
+    pointer-events:none;opacity:0;
+    transition:opacity 0.35s;
+    z-index:10;white-space:nowrap;
+  }
+
+  /* ── GESTURE BAR ── */
+  #gesture-bar{
+    position:absolute;bottom:22px;left:50%;
+    transform:translateX(-50%);
+    padding:8px 22px;border-radius:30px;
+    font-size:13px;font-weight:700;letter-spacing:1px;
+    pointer-events:none;
+    transition:all 0.2s;
+    border:1.5px solid rgba(255,255,255,0.18);
+    color:rgba(255,255,255,0.65);
+    background:rgba(0,0,0,0.5);
+    backdrop-filter:blur(8px);
+    z-index:10;white-space:nowrap;
+  }
+  #gesture-bar.knife{
+    background:rgba(255,50,0,0.25);
+    border-color:rgba(255,80,40,0.7);
+    color:#ff9f80;
+    text-shadow:0 0 10px rgba(255,60,0,0.8);
+    box-shadow:0 0 20px rgba(255,50,0,0.3);
+  }
+
+  /* ── LOADING SCREEN ── */
+  #loading-screen{
+    position:absolute;inset:0;
+    display:flex;flex-direction:column;
+    align-items:center;justify-content:center;
+    gap:16px;z-index:50;
+    background:rgba(0,0,0,0.75);
+    backdrop-filter:blur(4px);
+  }
+  .loader-ring{
+    width:60px;height:60px;
+    border:3px solid rgba(255,255,255,0.1);
+    border-top-color:rgba(255,180,50,0.9);
+    border-radius:50%;
+    animation:spin 0.9s linear infinite;
+  }
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .loader-text{
+    font-family:'Zen Dots',monospace;
+    font-size:14px;letter-spacing:3px;color:rgba(255,255,255,0.6);
+    text-transform:uppercase;
+  }
+
+  /* ── START SCREEN (over camera) ── */
+  #start-screen{
+    position:absolute;inset:0;
+    display:none;
+    flex-direction:column;
+    align-items:center;justify-content:center;
+    gap:22px;z-index:20;
+  }
+  .start-title{
+    font-family:'Zen Dots',monospace;
+    font-size:clamp(36px,7vw,72px);
+    color:#fff;letter-spacing:-1px;
+    text-shadow:0 0 60px rgba(255,100,30,0.9),0 0 120px rgba(255,50,0,0.4);
+    animation:titlePulse 2.5s ease-in-out infinite;
+  }
+  @keyframes titlePulse{
+    0%,100%{text-shadow:0 0 60px rgba(255,100,30,0.9),0 0 120px rgba(255,50,0,0.4);}
+    50%{text-shadow:0 0 80px rgba(255,140,50,1),0 0 160px rgba(255,80,0,0.6);}
+  }
+  .hand-detected-badge{
+    display:flex;align-items:center;gap:8px;
+    padding:6px 18px;border-radius:20px;
+    background:rgba(50,255,100,0.15);
+    border:1px solid rgba(50,255,100,0.4);
+    color:rgba(100,255,140,0.9);
+    font-size:13px;font-weight:700;letter-spacing:1px;
+    animation:fadeInBounce 0.4s cubic-bezier(0.34,1.56,0.64,1);
+  }
+  @keyframes fadeInBounce{from{opacity:0;transform:scale(0.7)}to{opacity:1;transform:scale(1)}}
+  .hand-dot{width:8px;height:8px;border-radius:50%;background:#4eff80;box-shadow:0 0 8px #4eff80;animation:blink 1s infinite;}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:0.3}}
+
+  #start-btn{
+    padding:16px 56px;
+    background:rgba(255,255,255,0.06);
+    border:2px solid rgba(255,255,255,0.5);
+    border-radius:50px;
+    color:#fff;
+    font-family:'Zen Dots',monospace;
+    font-size:18px;letter-spacing:3px;
+    cursor:pointer;
+    transition:all 0.25s cubic-bezier(0.34,1.56,0.64,1);
+    backdrop-filter:blur(12px);
+    display:none;
+  }
+  #start-btn:hover{
+    background:rgba(255,255,255,0.15);
+    border-color:#fff;
+    transform:scale(1.06);
+    box-shadow:0 0 40px rgba(255,255,255,0.2);
+  }
+  #start-btn:active{transform:scale(0.97)}
+
+  .tip-text{
+    font-size:13px;color:rgba(255,255,255,0.4);
+    letter-spacing:1px;text-align:center;
+    max-width:300px;line-height:1.8;
+  }
+  .tip-text strong{color:rgba(255,200,80,0.8)}
+
+  /* ── GAMEOVER SCREEN ── */
+  #gameover-screen{
+    position:absolute;inset:0;
+    display:none;flex-direction:column;
+    align-items:center;justify-content:center;
+    gap:18px;z-index:40;
+    background:rgba(0,0,0,0.82);
+    backdrop-filter:blur(10px);
+    animation:fadeIn 0.5s ease;
+  }
+  @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+
+  .go-title{
+    font-family:'Zen Dots',monospace;
+    font-size:clamp(40px,8vw,80px);
+    color:#fff;
+    text-shadow:0 0 50px rgba(255,50,30,0.9);
+    animation:shake 0.5s ease;
+  }
+  @keyframes shake{
+    0%,100%{transform:translateX(0)}
+    20%{transform:translateX(-12px)}40%{transform:translateX(12px)}
+    60%{transform:translateX(-8px)}80%{transform:translateX(8px)}
+  }
+
+  .go-reason{
+    font-size:15px;color:rgba(255,150,100,0.8);
+    letter-spacing:2px;font-weight:700;
+    text-transform:uppercase;
+  }
+
+  .go-score-wrap{display:flex;flex-direction:column;align-items:center;gap:4px;}
+  .go-score-label{font-size:12px;letter-spacing:3px;color:rgba(255,255,255,0.4);text-transform:uppercase;}
+  .go-score-val{
+    font-family:'Zen Dots',monospace;
+    font-size:72px;color:#ffd700;line-height:1;
+    text-shadow:0 0 30px rgba(255,215,0,0.6);
+  }
+
+  .go-divider{width:80px;height:1px;background:rgba(255,255,255,0.12);}
+
+  #restart-btn{
+    padding:14px 48px;
+    background:rgba(255,100,40,0.15);
+    border:2px solid rgba(255,100,40,0.6);
+    border-radius:50px;
+    color:#fff;
+    font-family:'Zen Dots',monospace;
+    font-size:16px;letter-spacing:3px;
+    cursor:pointer;
+    transition:all 0.25s cubic-bezier(0.34,1.56,0.64,1);
+    backdrop-filter:blur(8px);
+  }
+  #restart-btn:hover{
+    background:rgba(255,100,40,0.35);
+    border-color:rgba(255,130,70,0.9);
+    transform:scale(1.06);
+    box-shadow:0 0 30px rgba(255,100,40,0.4);
+  }
+  #restart-btn:active{transform:scale(0.97)}
+
+  /* ── BOMB FLASH ── */
+  #bomb-flash{
+    position:absolute;inset:0;
+    background:radial-gradient(circle at center,rgba(255,100,0,0.8),rgba(255,0,0,0.4),transparent 70%);
+    opacity:0;pointer-events:none;z-index:30;
+    transition:opacity 0.1s;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <video id="videoEl" autoplay playsinline muted></video>
+  <canvas id="gameCanvas"></canvas>
+
+  <div id="hud">
+    <div id="score-wrap">
+      <div id="score-label">Score</div>
+      <div id="score-val">0</div>
+    </div>
+    <div id="missed-wrap">
+      <div id="missed-label">Missed</div>
+      <div id="missed-icons"></div>
+    </div>
+  </div>
+
+  <div id="combo-display"></div>
+  <div id="gesture-bar">📷 Starting camera...</div>
+  <div id="bomb-flash"></div>
+
+  <div id="loading-screen">
+    <div class="loader-ring"></div>
+    <div class="loader-text">Loading AI hand tracker...</div>
+  </div>
+
+  <div id="start-screen">
+    <div class="start-title">🥷 FRUIT NINJA</div>
+    <div id="hand-badge" style="display:none" class="hand-detected-badge">
+      <span class="hand-dot"></span> HAND DETECTED
+    </div>
+    <button id="start-btn">▶ START</button>
+    <div class="tip-text">
+      ☝️ Point <strong>one finger</strong> → blade mode<br>
+      ✋ Open hand → safe mode
+    </div>
+  </div>
+
+  <div id="gameover-screen">
+    <div class="go-title">GAME OVER</div>
+    <div class="go-reason" id="go-reason">10 FRUITS MISSED</div>
+    <div class="go-divider"></div>
+    <div class="go-score-wrap">
+      <div class="go-score-label">Final Score</div>
+      <div class="go-score-val" id="go-score">0</div>
+    </div>
+    <div class="go-divider"></div>
+    <button id="restart-btn">↺ PLAY AGAIN</button>
+  </div>
+</div>
+
+<script>
+// ─── SETUP ───────────────────────────────────────────────
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const videoEl = document.getElementById('videoEl');
+
+let W, H;
+function resize(){
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// ─── STATE ───────────────────────────────────────────────
+let gameState = 'loading'; // loading | start | playing | over
+let score = 0;
+let missed = 0;
+const MAX_MISSED = 10;
+let combo = 0;
+let comboTimer = 0;
+let frame = 0;
+let fruits = [], particles = [], slashTrail = [], scoreFloats = [], shockwaves = [];
+let isKnife = false;
+let handVisible = false;
+let fingerTipX = -1, fingerTipY = -1;
+let prevFingerTipX = -1, prevFingerTipY = -1;
+
+// ─── FRUIT TYPES ─────────────────────────────────────────
+const FRUIT_TYPES = [
+  {emoji:'🍎', color:'#ff4444', juice:'#cc0000', pts:1},
+  {emoji:'🍊', color:'#ff8800', juice:'#cc5500', pts:1},
+  {emoji:'🍋', color:'#ffdd00', juice:'#ccaa00', pts:2},
+  {emoji:'🍇', color:'#aa44ff', juice:'#7700cc', pts:2},
+  {emoji:'🍓', color:'#ff2255', juice:'#aa0033', pts:3},
+  {emoji:'🥭', color:'#ffaa00', juice:'#cc6600', pts:2},
+  {emoji:'🍑', color:'#ff9966', juice:'#cc5522', pts:2},
+  {emoji:'🍍', color:'#ffcc00', juice:'#aaaa00', pts:3},
+  {emoji:'🥝', color:'#44cc44', juice:'#228822', pts:2},
+  {emoji:'🍒', color:'#cc2244', juice:'#881122', pts:3},
+];
+
+// ─── CLASSES ─────────────────────────────────────────────
+class Fruit {
+  constructor(){
+    this.r = 36 + Math.random()*16;
+    this.x = this.r*1.5 + Math.random()*(W - this.r*3);
+    this.y = H + this.r + 20;
+    // Much faster launch — must reach at least 60% up the screen
+    const spd = 18 + Math.random()*10;
+    const ang = -Math.PI/2 + (Math.random()-0.5)*0.55;
+    this.vx = Math.cos(ang)*spd;
+    this.vy = Math.sin(ang)*spd;
+    this.gravity = 0.38;
+    this.rot = Math.random()*Math.PI*2;
+    this.spin = (Math.random()-0.5)*0.12;
+    this.isBomb = Math.random() < (score > 20 ? 0.10 : 0.06);
+    if(!this.isBomb){
+      const ft = FRUIT_TYPES[Math.floor(Math.random()*FRUIT_TYPES.length)];
+      this.emoji = ft.emoji; this.color = ft.color;
+      this.juice = ft.juice; this.pts = ft.pts;
+    } else {
+      this.emoji='💣'; this.color='#555'; this.juice='#ff6600'; this.pts=0;
+    }
+    this.alive = true;
+    this.sliced = false;
+    this.halves = null;
+    this.alpha = 1;
+  }
+  update(){
+    this.x += this.vx; this.vy += this.gravity; this.y += this.vy;
+    this.rot += this.spin;
+    if(this.sliced){
+      this.alpha -= 0.032;
+      if(this.halves){
+        this.halves.forEach(h=>{
+          h.x+=h.vx; h.y+=h.vy; h.vy+=0.38;
+          h.rot+=h.spin; h.alpha-=0.03;
+        });
+      }
+      if(this.alpha<=0) this.alive=false;
+    } else if(this.y > H+this.r+30 && this.vy>0){
+      if(!this.isBomb){ handleMiss(this.x,this.y); }
+      this.alive=false;
+    }
+  }
+  draw(){
+    if(!this.alive) return;
+    ctx.save();
+    if(this.sliced && this.halves){
+      this.halves.forEach((h,i)=>{
+        if(h.alpha<=0) return;
+        ctx.save(); ctx.globalAlpha=Math.max(0,h.alpha);
+        ctx.translate(h.x,h.y); ctx.rotate(h.rot);
+        // solid half-circle background
+        ctx.beginPath();
+        if(i===0) ctx.arc(0,0,this.r,Math.PI,0,false);
+        else ctx.arc(0,0,this.r,0,Math.PI,false);
+        ctx.fillStyle=this.color; ctx.fill();
+        ctx.beginPath();
+        if(i===0) ctx.arc(0,0,this.r,Math.PI,0,false);
+        else ctx.arc(0,0,this.r,0,Math.PI,false);
+        ctx.fillStyle=this.juice+'cc'; ctx.fill();
+        ctx.font=`${this.r*1.7}px serif`;
+        ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillText(this.emoji,0,0);
+        ctx.restore();
+      });
+    } else {
+      ctx.globalAlpha=Math.max(0,this.alpha);
+      ctx.translate(this.x,this.y); ctx.rotate(this.rot);
+
+      // SOLID background circle — fully opaque, no transparency
+      ctx.beginPath(); ctx.arc(0,0,this.r,0,Math.PI*2);
+      ctx.fillStyle = this.isBomb ? '#222' : this.color;
+      ctx.fill();
+
+      // bright inner highlight
+      ctx.beginPath(); ctx.arc(-this.r*0.2,-this.r*0.25,this.r*0.45,0,Math.PI*2);
+      ctx.fillStyle='rgba(255,255,255,0.28)'; ctx.fill();
+
+      // outer glow ring
+      ctx.beginPath(); ctx.arc(0,0,this.r+5,0,Math.PI*2);
+      ctx.strokeStyle=this.isBomb?'rgba(255,100,0,0.6)':this.color+'aa';
+      ctx.lineWidth=3; ctx.stroke();
+
+      // emoji on top
+      ctx.font=`${this.r*1.55}px serif`;
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(this.emoji,0,0);
+    }
+    ctx.restore();
+  }
+  slice(){
+    if(this.sliced) return true;
+    this.sliced=true;
+    this.halves=[
+      {x:this.x-this.r*0.3, y:this.y, vx:-5-Math.random()*3, vy:-8-Math.random()*4, rot:this.rot, spin:this.spin-0.08, alpha:1},
+      {x:this.x+this.r*0.3, y:this.y, vx: 5+Math.random()*3, vy:-8-Math.random()*4, rot:this.rot, spin:this.spin+0.08, alpha:1},
+    ];
+    return true;
+  }
+}
+
+class Particle {
+  constructor(x,y,vx,vy,color,r,life,grav=0.3){
+    this.x=x;this.y=y;this.vx=vx;this.vy=vy;
+    this.color=color;this.r=r;this.life=life;this.maxLife=life;this.grav=grav;
+  }
+  update(){this.x+=this.vx;this.y+=this.vy;this.vy+=this.grav;this.life--;}
+  draw(){
+    if(this.life<=0)return;
+    ctx.save(); ctx.globalAlpha=(this.life/this.maxLife);
+    ctx.beginPath(); ctx.arc(this.x,this.y,this.r,0,Math.PI*2);
+    ctx.fillStyle=this.color; ctx.fill(); ctx.restore();
+  }
+}
+
+class Shockwave {
+  constructor(x,y,color){this.x=x;this.y=y;this.r=10;this.maxR=100;this.color=color;this.life=30;}
+  update(){this.r+=4;this.life--;}
+  draw(){
+    if(this.life<=0)return;
+    ctx.save();
+    ctx.globalAlpha=(this.life/30)*0.6;
+    ctx.beginPath(); ctx.arc(this.x,this.y,this.r,0,Math.PI*2);
+    ctx.strokeStyle=this.color; ctx.lineWidth=3;
+    ctx.stroke(); ctx.restore();
+  }
+}
+
+// ─── EFFECTS ─────────────────────────────────────────────
+function spawnSliceEffects(f){
+  // juice droplets
+  const count = 20+Math.floor(f.r/3);
+  for(let i=0;i<count;i++){
+    const ang=Math.random()*Math.PI*2, spd=2+Math.random()*7;
+    particles.push(new Particle(f.x,f.y,
+      Math.cos(ang)*spd, Math.sin(ang)*spd-3,
+      f.juice, 2+Math.random()*5, 28+Math.floor(Math.random()*22)));
+  }
+  // big juice splatter
+  for(let i=0;i<8;i++){
+    const ang=Math.random()*Math.PI*2, spd=5+Math.random()*8;
+    particles.push(new Particle(f.x,f.y,
+      Math.cos(ang)*spd, Math.sin(ang)*spd-4,
+      f.color+'cc', 6+Math.random()*8, 20+Math.floor(Math.random()*15)));
+  }
+  // glitter sparks
+  for(let i=0;i<12;i++){
+    const ang=(i/12)*Math.PI*2, spd=4+Math.random()*6;
+    particles.push(new Particle(f.x,f.y,
+      Math.cos(ang)*spd, Math.sin(ang)*spd-2,
+      '#ffffff', 1.5+Math.random()*2, 15+Math.floor(Math.random()*10), 0.1));
+  }
+  // shockwave
+  shockwaves.push(new Shockwave(f.x,f.y,f.color));
+  // second ring
+  setTimeout(()=>shockwaves.push(new Shockwave(f.x,f.y,'#ffffff88')),80);
+}
+
+function spawnBombEffects(x,y){
+  for(let i=0;i<50;i++){
+    const ang=(i/50)*Math.PI*2, spd=3+Math.random()*10;
+    const col=i%3===0?'#ff4400':i%3===1?'#ffcc00':'#ff8800';
+    particles.push(new Particle(x,y,Math.cos(ang)*spd,Math.sin(ang)*spd-3,col,4+Math.random()*6,40+Math.floor(Math.random()*20)));
+  }
+  for(let i=0;i<3;i++){
+    setTimeout(()=>shockwaves.push(new Shockwave(x,y,i===0?'#ff6600':i===1?'#ffcc00':'#ff0000')),i*60);
+  }
+  // screen flash
+  const bf=document.getElementById('bomb-flash');
+  bf.style.opacity='1';
+  setTimeout(()=>bf.style.opacity='0',300);
+}
+
+function spawnMissParticles(x,y){
+  for(let i=0;i<12;i++){
+    const ang=Math.random()*Math.PI*2;
+    particles.push(new Particle(x,H-30,Math.cos(ang)*2,Math.sin(ang)*2-2,'#ff3333',3,25));
+  }
+}
+
+// ─── GAME LOGIC ───────────────────────────────────────────
+function handleMiss(x,y){
+  missed++;
+  updateMissedUI();
+  spawnMissParticles(x,y);
+  if(missed>=MAX_MISSED) triggerGameOver('10 FRUITS MISSED');
+}
+
+function updateMissedUI(){
+  const c=document.getElementById('missed-icons');
+  c.innerHTML='';
+  for(let i=0;i<MAX_MISSED;i++){
+    const d=document.createElement('div');
+    d.className='missed-dot'+(i<missed?' hit':'');
+    c.appendChild(d);
+  }
+}
+
+function addScore(pts,x,y){
+  score+=pts;
+  document.getElementById('score-val').textContent=score;
+  combo++;
+  comboTimer=100;
+  const bonus=combo>=5?3:combo>=3?2:1;
+  const disp=pts*bonus;
+  scoreFloats.push({x,y,val:(bonus>1?`+${disp} x${bonus}`:`+${disp}`),life:50,vy:-1.8,color:bonus>1?'#ffd700':'#ffffff'});
+  if(combo>=3){
+    const el=document.getElementById('combo-display');
+    el.textContent=`${combo}× COMBO ${combo>=10?'🔥🔥🔥':combo>=5?'🔥🔥':'🔥'}`;
+    el.style.opacity='1';
+  }
+}
+
+// Distance from point (px,py) to segment (ax,ay)-(bx,by)
+function pointSegDist2(px,py,ax,ay,bx,by){
+  const dx=bx-ax, dy=by-ay;
+  const len2=dx*dx+dy*dy;
+  if(len2===0) return (px-ax)*(px-ax)+(py-ay)*(py-ay);
+  let t=((px-ax)*dx+(py-ay)*dy)/len2;
+  t=Math.max(0,Math.min(1,t));
+  const nx=ax+t*dx-px, ny=ay+t*dy-py;
+  return nx*nx+ny*ny;
+}
+
+function sliceFruit(f){
+  if(f.isBomb){
+    f.slice(); spawnBombEffects(f.x,f.y); triggerGameOver('BOMB HIT! 💣');
+  } else {
+    f.slice(); spawnSliceEffects(f); addScore(f.pts,f.x,f.y);
+  }
+}
+
+function checkSlice(){
+  if(!isKnife || slashTrail.length<2) return;
+  // Test every consecutive pair of trail points as a segment
+  // Also interpolate dense sub-points to fill gaps from fast motion
+  const trail=slashTrail;
+  const n=trail.length;
+  for(let i=Math.max(0,n-6);i<n-1;i++){
+    const a=trail[i], b=trail[i+1];
+    const dx=b.x-a.x, dy=b.y-a.y;
+    const segLen=Math.sqrt(dx*dx+dy*dy);
+    if(segLen<1) continue;
+    // Insert interpolated sub-points every 8px along fast segments
+    const steps=Math.max(1,Math.ceil(segLen/8));
+    for(let s=0;s<=steps;s++){
+      const t=s/steps;
+      const px=a.x+dx*t, py=a.y+dy*t;
+      fruits.forEach(f=>{
+        if(f.sliced||!f.alive) return;
+        // Generous hitbox: fruit radius + 20px buffer for fast motion
+        const hit=(f.r+20)*(f.r+20);
+        const d2=(f.x-px)*(f.x-px)+(f.y-py)*(f.y-py);
+        if(d2<hit) sliceFruit(f);
+      });
+    }
+    // Also do full segment test for any remaining gaps
+    fruits.forEach(f=>{
+      if(f.sliced||!f.alive) return;
+      const hit=(f.r+20)*(f.r+20);
+      if(pointSegDist2(f.x,f.y,a.x,a.y,b.x,b.y)<hit) sliceFruit(f);
+    });
+  }
+}
+
+function triggerGameOver(reason){
+  gameState='over';
+  document.getElementById('go-reason').textContent=reason;
+  document.getElementById('go-score').textContent=score;
+  document.getElementById('gameover-screen').style.display='flex';
+  document.getElementById('hud').style.display='none';
+  document.getElementById('gesture-bar').style.display='none';
+  document.getElementById('combo-display').style.opacity='0';
+}
+
+// ─── DRAW SLASH TRAIL ────────────────────────────────────
+function drawSlashTrail(){
+  if(slashTrail.length<2) return;
+  const len=slashTrail.length;
+  for(let i=1;i<len;i++){
+    const t=i/len;
+    const p=slashTrail[i-1], c=slashTrail[i];
+    ctx.save();
+    ctx.globalAlpha=t*(isKnife?0.95:0.2);
+    if(isKnife){
+      const g=ctx.createLinearGradient(p.x,p.y,c.x,c.y);
+      g.addColorStop(0,'rgba(255,180,0,0)');
+      g.addColorStop(1,'rgba(255,80,0,1)');
+      ctx.strokeStyle=g;
+      ctx.lineWidth=6*t;
+    } else {
+      ctx.strokeStyle=`rgba(255,255,255,${0.3*t})`;
+      ctx.lineWidth=2*t;
+    }
+    ctx.lineCap='round';
+    ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(c.x,c.y);
+    ctx.stroke(); ctx.restore();
+  }
+  if(isKnife && len>0){
+    const tip=slashTrail[len-1];
+    // blade tip glow
+    const grad=ctx.createRadialGradient(tip.x,tip.y,0,tip.x,tip.y,18);
+    grad.addColorStop(0,'rgba(255,255,200,0.95)');
+    grad.addColorStop(0.3,'rgba(255,120,0,0.8)');
+    grad.addColorStop(1,'rgba(255,50,0,0)');
+    ctx.save(); ctx.globalAlpha=0.9;
+    ctx.beginPath(); ctx.arc(tip.x,tip.y,18,0,Math.PI*2);
+    ctx.fillStyle=grad; ctx.fill(); ctx.restore();
+    // core dot
+    ctx.save();
+    ctx.beginPath(); ctx.arc(tip.x,tip.y,4,0,Math.PI*2);
+    ctx.fillStyle='#fff';
+    ctx.shadowColor='#ff8800'; ctx.shadowBlur=20;
+    ctx.fill(); ctx.restore();
+  }
+}
+
+// ─── MAIN LOOP ───────────────────────────────────────────
+let spawnTimer=0;
+function gameLoop(){
+  requestAnimationFrame(gameLoop);
+  ctx.clearRect(0,0,W,H);
+
+  if(gameState!=='playing') return;
+
+  frame++;
+  spawnTimer++;
+  const rate=Math.max(30,90-Math.floor(score/5));
+  if(spawnTimer>=rate){ spawnTimer=0; fruits.push(new Fruit()); }
+  if(score>15 && frame%70===0) fruits.push(new Fruit());
+  if(score>40 && frame%50===0) fruits.push(new Fruit());
+  if(score>80 && frame%40===0) fruits.push(new Fruit());
+
+  if(comboTimer>0){
+    comboTimer--;
+    if(comboTimer===0){
+      combo=0;
+      document.getElementById('combo-display').style.opacity='0';
+    }
+  }
+
+  drawSlashTrail();
+  slashTrail=slashTrail.slice(-40); // keep more points for fast motion
+
+  shockwaves=shockwaves.filter(s=>s.life>0);
+  shockwaves.forEach(s=>{s.update();s.draw();});
+
+  fruits=fruits.filter(f=>f.alive);
+  fruits.forEach(f=>{f.update();f.draw();});
+
+  particles=particles.filter(p=>p.life>0);
+  particles.forEach(p=>{p.update();p.draw();});
+
+  checkSlice();
+
+  scoreFloats=scoreFloats.filter(s=>s.life>0);
+  scoreFloats.forEach(s=>{
+    s.y+=s.vy; s.life--;
+    ctx.save();
+    ctx.globalAlpha=Math.min(1,s.life/20);
+    ctx.font=`bold 22px 'Zen Dots', monospace`;
+    ctx.textAlign='center';
+    ctx.fillStyle=s.color;
+    ctx.shadowColor=s.color; ctx.shadowBlur=8;
+    ctx.fillText(s.val,s.x,s.y);
+    ctx.restore();
+  });
+}
+
+// ─── START / RESTART ─────────────────────────────────────
+function startGame(){
+  score=0; missed=0; combo=0; comboTimer=0; frame=0; spawnTimer=0;
+  fruits=[]; particles=[]; slashTrail=[]; scoreFloats=[]; shockwaves=[];
+  document.getElementById('score-val').textContent='0';
+  document.getElementById('combo-display').style.opacity='0';
+  document.getElementById('gameover-screen').style.display='none';
+  document.getElementById('start-screen').style.display='none';
+  document.getElementById('hud').style.display='flex';
+  document.getElementById('gesture-bar').style.display='block';
+  document.getElementById('bomb-flash').style.opacity='0';
+  updateMissedUI();
+  gameState='playing';
+}
+
+document.getElementById('start-btn').onclick=startGame;
+document.getElementById('restart-btn').onclick=startGame;
+
+// ─── HAND TRACKING ────────────────────────────────────────
+
+// Robust finger detection that works with both palm-facing AND back-of-hand
+function countExtended(lm){
+  // Method 1: y-position (works when hand faces camera, palm up)
+  const tips  = [8, 12, 16, 20];
+  const mids  = [6, 10, 14, 18];
+  const bases = [5,  9, 13, 17];
+
+  let yCount = 0; // fingers where tip is above mid knuckle
+  tips.forEach((t,i)=>{
+    // tip clearly above mid AND base (more lenient: just tip above mid)
+    if(lm[t].y < lm[mids[i]].y - 0.02) yCount++;
+  });
+
+  // Method 2: distance from wrist (works at any angle)
+  // If fingertip is far from wrist, it's likely extended
+  const wrist = lm[0];
+  let distCount = 0;
+  tips.forEach((t,i)=>{
+    const dx=lm[t].x-wrist.x, dy=lm[t].y-wrist.y;
+    const tipDist=dx*dx+dy*dy;
+    // Compare to the knuckle distance as reference
+    const kx=lm[bases[i]].x-wrist.x, ky=lm[bases[i]].y-wrist.y;
+    const knuckleDist=kx*kx+ky*ky;
+    if(tipDist > knuckleDist * 1.8) distCount++; // tip much farther than knuckle
+  });
+
+  // Method 3: z-depth — extended finger has different depth than curled
+  // Use whichever method gives a clearer signal
+  // Take the MAX of both methods (most permissive)
+  return Math.max(yCount, distCount);
+}
+
+// Determine knife mode: 1-2 fingers extended = knife
+// (accepts index alone, or index+middle for pointing with back-of-hand)
+function isKnifeGesture(lm){
+  const n = countExtended(lm);
+  return n >= 1 && n <= 2;
+}
+
+// Always track index fingertip (lm[8]) regardless of hand orientation
+// Fall back to middle fingertip (lm[12]) if index seems unreliable
+function getBladeTip(lm){
+  // Primary: index fingertip
+  return { x: (1 - lm[8].x) * W, y: lm[8].y * H };
+}
+
+function updateGestureBar(){
+  const el=document.getElementById('gesture-bar');
+  if(!handVisible){ el.textContent='👋 Show your hand...'; el.className=''; return; }
+  if(isKnife){ el.textContent='☝️ BLADE MODE — SLICE!'; el.className='knife'; }
+  else { el.textContent='✋ Open hand — safe mode'; el.className=''; }
+}
+
+async function initCamera(){
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia({video:{width:{ideal:1280},height:{ideal:720},facingMode:'user'},audio:false});
+    videoEl.srcObject=stream;
+    await new Promise(r=>{ videoEl.onloadedmetadata=r; });
+    videoEl.play();
+  } catch(e){
+    document.querySelector('.loader-text').textContent='Camera blocked — using mouse fallback';
+    setTimeout(()=>{ showStartScreen(); setupMouseFallback(); },1500);
+    return;
+  }
+
+  if(typeof Hands==='undefined'){
+    showStartScreen(); setupMouseFallback(); return;
+  }
+
+  const hands=new Hands({
+    locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${f}`
+  });
+  hands.setOptions({
+    maxNumHands:1,
+    modelComplexity:1,          // use better model for tricky angles
+    minDetectionConfidence:0.5, // much lower — catch more hand poses
+    minTrackingConfidence:0.4   // keep tracking even during fast motion
+  });
+
+  hands.onResults(results=>{
+    if(gameState==='loading') return;
+
+    const detected=results.multiHandLandmarks&&results.multiHandLandmarks.length>0;
+    const wasVisible=handVisible;
+    handVisible=detected;
+
+    if(gameState==='start'){
+      const badge=document.getElementById('hand-badge');
+      const btn=document.getElementById('start-btn');
+      if(detected && !wasVisible){
+        badge.style.display='flex';
+        btn.style.display='block';
+      } else if(!detected && wasVisible){
+        badge.style.display='none';
+        btn.style.display='none';
+      }
+    }
+
+    if(!detected){ isKnife=false; updateGestureBar(); return; }
+
+    const lm=results.multiHandLandmarks[0];
+    isKnife = isKnifeGesture(lm);
+    updateGestureBar();
+
+    // Get blade tip position (always index finger, mirrored)
+    const tip = getBladeTip(lm);
+    const nx = tip.x, ny = tip.y;
+
+    if(gameState==='playing' && isKnife){
+      // Interpolate between last known position and new one
+      // to fill gaps from low mediapipe FPS (15-20fps)
+      if(fingerTipX >= 0 && fingerTipY >= 0){
+        const dx=nx-fingerTipX, dy=ny-fingerTipY;
+        const dist=Math.sqrt(dx*dx+dy*dy);
+        const steps=Math.max(1,Math.ceil(dist/12));
+        for(let s=1;s<steps;s++){
+          const t=s/steps;
+          slashTrail.push({x:fingerTipX+dx*t, y:fingerTipY+dy*t});
+        }
+      }
+      slashTrail.push({x:nx,y:ny});
+    }
+    fingerTipX=nx; fingerTipY=ny;
+  });
+
+  const camera=new Camera(videoEl,{
+    onFrame:async()=>{ await hands.send({image:videoEl}); },
+    width:640,height:360
+  });
+  camera.start().then(()=>{
+    setTimeout(showStartScreen,800);
+  });
+}
+
+function showStartScreen(){
+  document.getElementById('loading-screen').style.display='none';
+  document.getElementById('start-screen').style.display='flex';
+  document.getElementById('gesture-bar').textContent='👋 Show your hand to begin...';
+  gameState='start';
+}
+
+function setupMouseFallback(){
+  document.getElementById('gesture-bar').textContent='🖱️ Hold click + drag to slice';
+  window.addEventListener('mousemove',e=>{
+    if(gameState!=='playing'||!isKnife) return;
+    slashTrail.push({x:e.clientX,y:e.clientY});
+  });
+  window.addEventListener('mousedown',()=>{ isKnife=true; updateGestureBar(); });
+  window.addEventListener('mouseup',()=>{ isKnife=false; updateGestureBar(); });
+  window.addEventListener('touchmove',e=>{
+    e.preventDefault();
+    if(gameState!=='playing') return;
+    const t=e.touches[0];
+    slashTrail.push({x:t.clientX,y:t.clientY});
+  },{passive:false});
+  window.addEventListener('touchstart',e=>{ isKnife=true; updateGestureBar(); e.preventDefault(); },{passive:false});
+  window.addEventListener('touchend',()=>{ isKnife=false; updateGestureBar(); });
+  handVisible=true;
+}
+
+// ─── BOOT ────────────────────────────────────────────────
+gameLoop();
+initCamera();
+</script>
+</body>
+</html>
