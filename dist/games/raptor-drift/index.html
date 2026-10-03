@@ -1,1 +1,46 @@
-<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Raptor Drift</title><style>html,body,canvas{margin:0;width:100%;height:100%;display:block;overflow:hidden;background:#130b22;color:white;font:700 18px system-ui}.hud{position:fixed;top:18px;left:20px}.tip{position:fixed;bottom:18px;width:100%;text-align:center;color:#dac6ff;font-size:14px}.screen{position:fixed;inset:0;display:grid;place-items:center;background:#130b22bb;text-align:center;font-size:34px}.screen small{font-size:15px;color:#dac6ff}</style><canvas></canvas><div class="hud">RAPTOR DRIFT<br><span id="s">0 m</span></div><div class="tip">Hold Space / touch to steer right • release to steer left</div><div class="screen" id="go">RAPTOR DRIFT<small>Tap or press Space to begin</small></div><script>const c=document.querySelector('canvas'),x=c.getContext('2d'),go=document.querySelector('#go'),sc=document.querySelector('#s');let W,H,car,road,m=0,v=2.3,on=0,hold=0;function reset(){W=c.width=innerWidth;H=c.height=innerHeight;car={x:W/2,y:H*.78};road=[];let q=W/2;for(let y=H+80;y>-1600;y-=34){q+=Math.sin(y*.007)*18;road.push({x:q,y})}m=0;v=2.3;on=1;go.style.display='none'}addEventListener('resize',()=>on&&reset());addEventListener('keydown',e=>{if(e.code==='Space'){hold=1;reset();e.preventDefault()}});addEventListener('keyup',e=>e.code==='Space&&(hold=0));addEventListener('pointerdown',()=>{hold=1;reset()});addEventListener('pointerup',()=>hold=0);function add(){let z=road.at(-1);road.push({x:Math.max(W*.25,Math.min(W*.75,z.x+(Math.random()-.5)*W*.13)),y:z.y-34})}function frame(){if(on){v=Math.min(5,m/900+2.3);car.x+=(hold?1:-1)*v*1.25;for(let r of road)r.y+=v;while(road[0].y>H+55)road.shift();while(road.at(-1).y>-50)add();let n=road.reduce((a,b)=>Math.abs(a.y-car.y)<Math.abs(b.y-car.y)?a:b);if(Math.abs(car.x-n.x)>W*.28){on=0;go.innerHTML='OFF THE ROAD<small>'+Math.floor(m)+' m — tap to retry</small>';go.style.display='grid'}m+=v*.25}x.fillStyle='#130b22';x.fillRect(0,0,W,H);for(let i=0;i<road.length-1;i++){let a=road[i],b=road[i+1];x.strokeStyle='#543080';x.lineWidth=W*.56;x.beginPath();x.moveTo(a.x,a.y);x.lineTo(b.x,b.y);x.stroke();x.strokeStyle='#eee4ff';x.lineWidth=5;x.setLineDash([18,18]);x.beginPath();x.moveTo(a.x,a.y);x.lineTo(b.x,b.y);x.stroke();x.setLineDash([])}x.save();x.translate(car.x,car.y);x.rotate(hold?.15:-.15);x.fillStyle='#a96cff';x.fillRect(-W*.045,-H*.05,W*.09,H*.11);x.fillStyle='#171020';x.fillRect(-W*.032,-H*.035,W*.064,H*.038);x.restore();sc.textContent=Math.floor(m)+' m';requestAnimationFrame(frame)}frame();</script>
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Raptor Drift</title>
+<style>
+  html,body,canvas{margin:0;width:100%;height:100%;display:block;overflow:hidden;background:#130b22;color:#fff;font:700 18px system-ui}
+  .hud{position:fixed;top:18px;left:20px;z-index:2}.tip{position:fixed;bottom:18px;width:100%;text-align:center;color:#dac6ff;font-size:14px;z-index:2}
+  .screen{position:fixed;inset:0;z-index:3;display:grid;place-items:center;background:#130b22bb;text-align:center;font-size:34px;cursor:pointer;border:0;color:#fff;font:700 34px system-ui}
+  .screen small{display:block;margin-top:10px;font-size:15px;color:#dac6ff}
+</style>
+<canvas></canvas>
+<div class="hud">RAPTOR DRIFT<br><span id="score">0 m</span></div>
+<div class="tip">Hold Space / touch to steer right · release to steer left</div>
+<button class="screen" id="start" type="button" aria-label="Start Raptor Drift">RAPTOR DRIFT<small>Tap or press Space to begin</small></button>
+<script>
+  const canvas=document.querySelector('canvas'), ctx=canvas.getContext('2d'), start=document.querySelector('#start'), score=document.querySelector('#score');
+  let W=0,H=0,car,road=[],meters=0,speed=2.3,running=false,holding=false;
+  function begin(){
+    W=canvas.width=innerWidth; H=canvas.height=innerHeight; car={x:W/2,y:H*.78}; road=[];
+    let center=W/2; for(let y=H+80;y>-1600;y-=34){center+=Math.sin(y*.007)*18;road.push({x:center,y})}
+    meters=0; speed=2.3; running=true; start.style.display='none';
+  }
+  function press(event){if(event.code==='Space'){holding=true; if(!running)begin(); event.preventDefault()}}
+  addEventListener('keydown',press); addEventListener('keyup',event=>{if(event.code==='Space')holding=false});
+  start.addEventListener('click',()=>{holding=false;begin()});
+  addEventListener('pointerdown',event=>{if(event.target===start)return; holding=true; if(!running)begin()});
+  addEventListener('pointerup',()=>holding=false); addEventListener('pointercancel',()=>holding=false);
+  addEventListener('resize',()=>{if(running)begin()});
+  function extendRoad(){const last=road[road.length-1];road.push({x:Math.max(W*.25,Math.min(W*.75,last.x+(Math.random()-.5)*W*.13)),y:last.y-34})}
+  function draw(){
+    if(running){
+      speed=Math.min(5,meters/900+2.3); car.x+=(holding?1:-1)*speed*1.25; road.forEach(piece=>piece.y+=speed);
+      while(road.length&&road[0].y>H+55)road.shift(); while(road[road.length-1].y>-50)extendRoad();
+      const near=road.reduce((best,piece)=>Math.abs(piece.y-car.y)<Math.abs(best.y-car.y)?piece:best);
+      if(Math.abs(car.x-near.x)>W*.28){running=false;start.innerHTML='OFF THE ROAD<small>'+Math.floor(meters)+' m — tap to retry</small>';start.style.display='grid'}
+      meters+=speed*.25;
+    }
+    ctx.fillStyle='#130b22';ctx.fillRect(0,0,W||innerWidth,H||innerHeight);
+    for(let i=0;i<road.length-1;i++){const a=road[i],b=road[i+1];ctx.strokeStyle='#543080';ctx.lineWidth=W*.56;ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();ctx.strokeStyle='#eee4ff';ctx.lineWidth=5;ctx.setLineDash([18,18]);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();ctx.setLineDash([])}
+    if(car){ctx.save();ctx.translate(car.x,car.y);ctx.rotate(holding?.15:-.15);ctx.fillStyle='#a96cff';ctx.fillRect(-W*.045,-H*.05,W*.09,H*.11);ctx.fillStyle='#171020';ctx.fillRect(-W*.032,-H*.035,W*.064,H*.038);ctx.restore()}
+    score.textContent=Math.floor(meters)+' m';requestAnimationFrame(draw);
+  }
+  draw();
+</script>
+</html>
