@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Caesar & Vigenère Escape Room</title>
+  <link rel="stylesheet" href="styles.css"/>
+  <script>
+    // Dialog polyfill
+    if (!('showModal' in document.createElement('dialog'))) {
+      const dialogs = document.getElementsByTagName('dialog');
+      Array.from(dialogs).forEach(dialog => {
+        if (!dialog.showModal) {
+          dialog.showModal = function() {
+            this.setAttribute('open', '');
+            this.style.display = 'block';
+          };
+          dialog.close = function() {
+            this.removeAttribute('open');
+            this.style.display = 'none';
+          };
+        }
+      });
+    }
+  </script>
+</head>
+<body>
+  <!-- Floating cipher particles -->
+  <div class="cipher-particles" id="cipher-particles" aria-hidden="true"></div>
+  
+  <main id="app" class="container">
+    <!-- Intro / Start Screen -->
+    <section id="screen-intro" class="screen active" role="region" aria-labelledby="intro-title">
+      <h1 id="intro-title">Crypto Escape Room</h1>
+      <p class="lede">
+        🐱🎶🍕 You’re relaxing at home after a long day at school. Your <strong>tabby</strong> cat <strong>Cipher</strong> prowls your room, a great <strong>nerdcore</strong> song loops in your head,
+        and in the kitchen the aroma cooking <strong>French pastries</strong> tells you that dinner will be amazing, with <strong>BBQ chicken pizza</strong>, great <strong>cheeses</strong> and <strong>prosciutto</strong> with fresh <strong>baguette</strong>, all to be followed by <strong>cake</strong>. 
+        But what if something gets in the way of this amazing meal?
+        Decode the messages (Caesar + Vigenère) to unlock each “door” before time runs out.
+      </p>
+      <ul class="rules">
+        <li>Start with <strong>Caesar</strong> (fixed shift), unlock <strong>Vigenère</strong> (keyword‑based) bonuses.</li>
+        <li>Use <strong>Tools</strong> (brute force, frequency, Vigenère helper) and the <strong>Tutorial</strong> if stuck.</li>
+        <li>Hints cost points. Faster solves = higher score. Save your score to the <strong>leaderboard</strong>.</li>
+      </ul>
+      <div class="intro-actions">
+        <button id="btn-start" class="btn primary">Start</button>
+        <button id="btn-leaderboard" class="btn">🏆 Leaderboard</button>
+        <button id="btn-tutorial-intro" class="btn">📘 Tutorial</button>
+        <button id="btn-dyslexia" class="btn" aria-pressed="false" aria-label="Toggle dyslexia-friendly mode">Aa Accessibility</button>
+      </div>
+    </section>
+
+    <!-- Game Screen -->
+
+    <section id="screen-game" class="screen" role="region" aria-live="polite">
+      <header class="hud">
+        <div>⭐ Score: <span id="hud-score">0</span></div>
+        <div>💡 Hints Left: <span id="hud-hints">3</span></div>
+        <div>⏱️ Time: <span id="hud-time">300</span>s</div>
+        <div>🧩 Puzzle <span id="hud-puzzle-index">1</span>/<span id="hud-puzzle-total">12</span></div>
+        <div class="hud-right">
+          <button id="btn-sound" class="btn small" aria-pressed="false" aria-label="Toggle music mode" disabled>🎵 Music: Off</button>
+          <button id="btn-tutorial" class="btn small">📘 Tutorial</button>
+          <button id="btn-dyslexia-game" class="btn small" aria-pressed="false" aria-label="Toggle dyslexia-friendly mode">Aa</button>
+          <button id="btn-leaderboard-game" class="btn small">🏆</button>
+        </div>
+      </header>
+
+      <article class="puzzle-card">
+        <h2 id="puzzle-title">Puzzle</h2>
+        <p id="puzzle-story" class="story"></p>
+        <div class="cipher-block">
+          <label for="ciphertext" class="label">Ciphertext</label>
+          <textarea id="ciphertext" readonly aria-readonly="true"></textarea>
+        </div>
+
+        <div id="prompt-area"></div>
+
+        <div class="actions">
+          <button id="btn-check" class="btn">Check</button>
+          <button id="btn-hint" class="btn">Use Hint (−10)</button>
+          <button id="btn-tools" class="btn">Tools</button>
+        </div>
+
+        <div id="feedback" class="feedback" role="status" aria-live="polite"></div>
+      </article>
+
+      <!-- Tools Modal -->
+      <dialog id="tools-dialog" aria-label="Cryptography Tools">
+        <h3>Cryptography Tools</h3>
+        <div class="tools-grid">
+          <section>
+            <h4>Brute Force (Caesar)</h4>
+            <label for="bf-shift">Shift (0–25)</label>
+            <input type="number" id="bf-shift" min="0" max="25" value="0"/>
+            <button id="bf-apply" class="btn small">Apply</button>
+            <pre id="bf-output" class="mono"></pre>
+            <button id="bf-all" class="btn small">Show All Shifts</button>
+            <pre id="bf-all-output" class="mono small"></pre>
+          </section>
+
+          <section>
+            <h4>Letter Frequency</h4>
+            <button id="freq-calc" class="btn small">Calculate</button>
+            <pre id="freq-output" class="mono small"></pre>
+            <p class="hint-note">Tip: English often has E, T, A, O, I, N more frequently.</p>
+          </section>
+
+          <section>
+            <h4>Vigenère Helper</h4>
+            <label for="vig-key" class="label">Keyword</label>
+            <input type="text" id="vig-key" placeholder="Try: LYRICS, TABBY, CHEESE, PASTRY, SPICE" />
+            <div class="actions">
+              <button id="vig-preview" class="btn small">Preview Decrypt</button>
+              <button id="vig-clear" class="btn small">Clear</button>
+            </div>
+            <pre id="vig-output" class="mono small" aria-live="polite"></pre>
+            <p class="hint-note">
+              Vigenère repeats the keyword over the message and applies a Caesar shift per letter.
+              Use the Tutorial for examples.
+            </p>
+          </section>
+        </div>
+        <button id="tools-close" class="btn">Close</button>
+      </dialog>
+
+      <!-- Universal Modal for all popups -->
+      <!-- universal modal moved to document root for visibility across screens -->
+    </section>
+
+    <!-- Win / Summary Screen -->
+    <section id="screen-win" class="screen" role="region" aria-labelledby="win-title">
+      <h2 id="win-title">You Escaped! 🗝️</h2>
+      <p>Final Score: <strong id="final-score"></strong></p>
+      <p>Total Time: <strong id="final-time"></strong>s</p>
+
+      <div class="save-score">
+        <label for="player-name" class="label">Save your score (name or initials)</label>
+        <input id="player-name" type="text" maxlength="24" placeholder="e.g., BENJAMIN" />
+        <button id="btn-save-score" class="btn primary">Save to Leaderboard</button>
+      </div>
+
+      <div class="post-win-actions">
+        <button id="btn-view-lb" class="btn">View Leaderboard</button>
+        <button id="btn-replay" class="btn primary">Play Again</button>
+        <button id="btn-tutorial-win" class="btn">📘 Tutorial</button>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>Learn to love cryptography! • Built for learning</span>
+  </footer>
+
+
+  <!-- Universal modal placed at document root so it's never inside a hidden screen -->
+  <div id="universal-modal" class="modal" style="display:none;">
+    <div class="modal-content" id="modal-content"></div>
+    <button id="modal-close" class="btn">Close</button>
+  </div>
+
+  <!-- Tutorial dialog (new, dialog element) -->
+  <dialog id="tutorial-dialog" aria-label="Tutorial">
+    <form method="dialog">
+      <article class="tutorial-content">
+        <h3>🎉 NEW TUTORIAL DIALOG (Updated 2025-10-15 16:40) 🎉</h3>
+        <section>
+          <h4>🔐 Caesar Cipher (single shift)</h4>
+          <p><strong>What is it?</strong> Every letter in the message shifts by the same amount (e.g., shift 3 means A→D, B→E, C→F).</p>
+          <p><strong>Example:</strong> With shift 3, the plaintext <code>BRING HOT SOUP FOR LUNCH</code> becomes the ciphertext <code>EULQJ KRW VRXS IRU OXQFK</code>.</p>
+          <p><strong>How to solve:</strong> Use the <em>Brute Force</em> tool to try all 26 possible shifts and look for readable English words!</p>
+        </section>
+        <section>
+          <h4>🔑 Vigenère Cipher (keyword-based)</h4>
+          <p><strong>What is it?</strong> Uses a <em>keyword</em> where each letter determines a different Caesar shift. The keyword repeats across the message.</p>
+          <p><strong>Example keyword:</strong> <code>LYRICS</code> gives shifts L(11), Y(24), R(17), I(8), C(2), S(18), then repeats.</p>
+          <p><strong>How to decrypt:</strong> For each ciphertext letter, subtract the corresponding keyword letter's shift value (wrapping around the alphabet).</p>
+          <p><strong>Try it yourself:</strong> The keyword <code>TABBY</code> will decrypt cat-themed messages. Use the <em>Vigenère Helper</em> tool: enter a keyword → click <em>Preview Decrypt</em> to see the plaintext!</p>
+        </section>
+        <menu>
+          <button id="tutorial-close" class="btn" value="close">Close</button>
+        </menu>
+      </article>
+    </form>
+  </dialog>
+
+  <!-- versioned script for hard cache-busting on GitHub Pages/CDNs -->
+  <script src="script.js?v=20251016103000"></script>
+</body>
+</html>
