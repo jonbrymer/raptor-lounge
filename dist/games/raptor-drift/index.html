@@ -4,43 +4,53 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Raptor Drift</title>
 <style>
-  html,body,canvas{margin:0;width:100%;height:100%;display:block;overflow:hidden;background:#130b22;color:#fff;font:700 18px system-ui}
-  .hud{position:fixed;top:18px;left:20px;z-index:2}.tip{position:fixed;bottom:18px;width:100%;text-align:center;color:#dac6ff;font-size:14px;z-index:2}
-  .screen{position:fixed;inset:0;z-index:3;display:grid;place-items:center;background:#130b22bb;text-align:center;font-size:34px;cursor:pointer;border:0;color:#fff;font:700 34px system-ui}
-  .screen small{display:block;margin-top:10px;font-size:15px;color:#dac6ff}
+  html,body,canvas{margin:0;width:100%;height:100%;display:block;overflow:hidden;background:#120a22;color:#fff;font:700 18px system-ui}
+  .hud{position:fixed;top:18px;left:20px;z-index:2;letter-spacing:.06em;text-shadow:0 2px 7px #000}.hud span{font-size:14px;color:#decaff}
+  .tip{position:fixed;bottom:15px;width:100%;text-align:center;color:#eadfff;font-size:13px;z-index:2;text-shadow:0 2px 7px #000}
+  .screen{position:fixed;inset:0;z-index:4;display:grid;place-items:center;background:#120a22aa;text-align:center;font-size:34px;cursor:pointer;border:0;color:#fff;font:700 34px system-ui}
+  .screen small{display:block;margin-top:11px;font-size:15px;color:#decaff}.screen:focus-visible{outline:4px solid #e8d7ff;outline-offset:-10px}
 </style>
-<canvas></canvas>
+<canvas aria-label="Raptor Drift driving game"></canvas>
 <div class="hud">RAPTOR DRIFT<br><span id="score">0 m</span></div>
-<div class="tip">Hold Space / touch to steer right · release to steer left</div>
-<button class="screen" id="start" type="button" aria-label="Start Raptor Drift">RAPTOR DRIFT<small>Tap or press Space to begin</small></button>
+<div class="tip">A / ← left &nbsp;·&nbsp; D / → right &nbsp;·&nbsp; Touch either side of the road</div>
+<button class="screen" id="start" type="button">RAPTOR DRIFT<small>Click, tap, or press Space to begin</small></button>
 <script>
-  const canvas=document.querySelector('canvas'), ctx=canvas.getContext('2d'), start=document.querySelector('#start'), score=document.querySelector('#score');
-  let W=0,H=0,car,road=[],meters=0,speed=2.3,running=false,holding=false;
-  function begin(){
-    W=canvas.width=innerWidth; H=canvas.height=innerHeight; car={x:W/2,y:H*.78}; road=[];
-    let center=W/2; for(let y=H+80;y>-1600;y-=34){center+=Math.sin(y*.007)*18;road.push({x:center,y})}
-    meters=0; speed=2.3; running=true; start.style.display='none';
+  const canvas=document.querySelector('canvas'),ctx=canvas.getContext('2d'),start=document.querySelector('#start'),score=document.querySelector('#score');
+  let W=0,H=0,running=false,distance=0,playerX=0,playerVelocity=0,steer=0,touchSteer=0,lastCurve=0;
+  const roadHalf=1150, cameraHeight=900, cameraDepth=1.35, drawDistance=22000, slice=260;
+  const resize=()=>{W=canvas.width=innerWidth;H=canvas.height=innerHeight};resize();addEventListener('resize',resize);
+  function curveAt(z){return Math.sin(z/4300)*1050+Math.sin(z/1850)*420+Math.sin(z/9200)*750}
+  function project(x,y,z,cameraZ,cameraX){const dz=Math.max(1,z-cameraZ),scale=cameraDepth/dz;return{x:W/2+scale*(x-cameraX)*W/2,y:H*.52-scale*(y-cameraHeight)*H/2,scale}}
+  function quad(a,b,c,d,color){ctx.fillStyle=color;ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.lineTo(c.x,c.y);ctx.lineTo(d.x,d.y);ctx.closePath();ctx.fill()}
+  function begin(){distance=0;playerX=0;playerVelocity=0;steer=0;touchSteer=0;lastCurve=curveAt(0);running=true;start.style.display='none'}
+  function end(){running=false;start.innerHTML='OFF THE ROAD<small>'+Math.floor(distance/9)+' m — click or tap to retry</small>';start.style.display='grid'}
+  start.addEventListener('click',begin);
+  addEventListener('keydown',event=>{if(event.code==='Space'&&!running){begin();event.preventDefault()}if(['ArrowLeft','KeyA'].includes(event.code)){steer=-1;event.preventDefault()}if(['ArrowRight','KeyD'].includes(event.code)){steer=1;event.preventDefault()}});
+  addEventListener('keyup',event=>{if(['ArrowLeft','KeyA','ArrowRight','KeyD'].includes(event.code))steer=0});
+  canvas.addEventListener('pointerdown',event=>{if(!running){begin();return}touchSteer=event.clientX<W/2?-1:1;canvas.setPointerCapture?.(event.pointerId)});
+  canvas.addEventListener('pointermove',event=>{if(event.buttons)touchSteer=event.clientX<W/2?-1:1});
+  addEventListener('pointerup',()=>touchSteer=0);addEventListener('pointercancel',()=>touchSteer=0);
+  function drawCar(){
+    const cx=W/2+playerX*W*.17,cy=H*.80,scale=Math.min(W,H)/900,turn=Math.max(-1,Math.min(1,playerVelocity*12));ctx.save();ctx.translate(cx,cy);ctx.scale(scale,scale);ctx.rotate(turn*.08);
+    ctx.fillStyle='#140c20';ctx.fillRect(-93,40,35,70);ctx.fillRect(58,40,35,70);
+    ctx.fillStyle='#6124b5';ctx.beginPath();ctx.moveTo(-83,72);ctx.lineTo(-58,-35);ctx.lineTo(54,-35);ctx.lineTo(82,72);ctx.lineTo(56,105);ctx.lineTo(-56,105);ctx.closePath();ctx.fill();
+    ctx.fillStyle='#b985ff';ctx.beginPath();ctx.moveTo(-48,-28);ctx.lineTo(-24,-66);ctx.lineTo(25,-66);ctx.lineTo(47,-28);ctx.closePath();ctx.fill();
+    ctx.fillStyle='#24123b';ctx.beginPath();ctx.moveTo(-38,-30);ctx.lineTo(-19,-57);ctx.lineTo(19,-57);ctx.lineTo(38,-30);ctx.closePath();ctx.fill();
+    ctx.fillStyle='#8f4ff2';ctx.fillRect(-77,70,154,19);ctx.fillStyle='#f1e4ff';ctx.fillRect(-58,79,28,9);ctx.fillRect(30,79,28,9);ctx.fillStyle='#fff';ctx.fillRect(-66,43,15,10);ctx.fillRect(51,43,15,10);
+    ctx.restore();
   }
-  function press(event){if(event.code==='Space'){holding=true; if(!running)begin(); event.preventDefault()}}
-  addEventListener('keydown',press); addEventListener('keyup',event=>{if(event.code==='Space')holding=false});
-  start.addEventListener('click',()=>{holding=false;begin()});
-  addEventListener('pointerdown',event=>{if(event.target===start)return; holding=true; if(!running)begin()});
-  addEventListener('pointerup',()=>holding=false); addEventListener('pointercancel',()=>holding=false);
-  addEventListener('resize',()=>{if(running)begin()});
-  function extendRoad(){const last=road[road.length-1];road.push({x:Math.max(W*.25,Math.min(W*.75,last.x+(Math.random()-.5)*W*.13)),y:last.y-34})}
-  function draw(){
-    if(running){
-      speed=Math.min(5,meters/900+2.3); car.x+=(holding?1:-1)*speed*1.25; road.forEach(piece=>piece.y+=speed);
-      while(road.length&&road[0].y>H+55)road.shift(); while(road[road.length-1].y>-50)extendRoad();
-      const near=road.reduce((best,piece)=>Math.abs(piece.y-car.y)<Math.abs(best.y-car.y)?piece:best);
-      if(Math.abs(car.x-near.x)>W*.28){running=false;start.innerHTML='OFF THE ROAD<small>'+Math.floor(meters)+' m — tap to retry</small>';start.style.display='grid'}
-      meters+=speed*.25;
+  function render(){
+    const sky=ctx.createLinearGradient(0,0,0,H*.6);sky.addColorStop(0,'#120a22');sky.addColorStop(1,'#633490');ctx.fillStyle=sky;ctx.fillRect(0,0,W,H*.56);ctx.fillStyle='#241338';ctx.fillRect(0,H*.52,W,H*.48);
+    const cameraZ=distance, cameraX=curveAt(cameraZ), rows=[];for(let z=cameraZ+420;z<cameraZ+drawDistance;z+=slice){const center=curveAt(z);rows.push({z,center,point:project(center,0,z,cameraZ,cameraX),left:project(center-roadHalf,0,z,cameraZ,cameraX),right:project(center+roadHalf,0,z,cameraZ,cameraX)})}
+    for(let i=rows.length-1;i>0;i--){const far=rows[i],near=rows[i-1];if(near.point.y<0||far.point.y>H)continue;const stripe=Math.floor(far.z/1200)%2;quad(far.left,far.right,near.right,near.left,stripe?'#4b2c67':'#42255e');
+      const rumble=roadHalf*.12;const fl=project(far.center-roadHalf-rumble,0,far.z,cameraZ,cameraX),fr=project(far.center+roadHalf+rumble,0,far.z,cameraZ,cameraX),nl=project(near.center-roadHalf-rumble,0,near.z,cameraZ,cameraX),nr=project(near.center+roadHalf+rumble,0,near.z,cameraZ,cameraX);quad(fl,far.left,near.left,nl,stripe?'#e8d8ff':'#a66bdf');quad(far.right,fr,nr,near.right,stripe?'#e8d8ff':'#a66bdf');
+      if(Math.floor(far.z/560)%2===0){const lane=.025;const a=project(far.center-roadHalf*lane,0,far.z,cameraZ,cameraX),b=project(far.center+roadHalf*lane,0,far.z,cameraZ,cameraX),c=project(near.center+roadHalf*lane,0,near.z,cameraZ,cameraX),d=project(near.center-roadHalf*lane,0,near.z,cameraZ,cameraX);quad(a,b,c,d,'#f6eaff')}
     }
-    ctx.fillStyle='#130b22';ctx.fillRect(0,0,W||innerWidth,H||innerHeight);
-    for(let i=0;i<road.length-1;i++){const a=road[i],b=road[i+1];ctx.strokeStyle='#543080';ctx.lineWidth=W*.56;ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();ctx.strokeStyle='#eee4ff';ctx.lineWidth=5;ctx.setLineDash([18,18]);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();ctx.setLineDash([])}
-    if(car){ctx.save();ctx.translate(car.x,car.y);ctx.rotate(holding?.15:-.15);ctx.fillStyle='#a96cff';ctx.fillRect(-W*.045,-H*.05,W*.09,H*.11);ctx.fillStyle='#171020';ctx.fillRect(-W*.032,-H*.035,W*.064,H*.038);ctx.restore()}
-    score.textContent=Math.floor(meters)+' m';requestAnimationFrame(draw);
+    drawCar();
   }
-  draw();
+  function loop(){
+    if(running){const speed=Math.min(95,48+distance/1500),currentCurve=curveAt(distance),curvePush=(currentCurve-lastCurve)/roadHalf;lastCurve=currentCurve;const input=steer||touchSteer;playerVelocity+=input*.0016*(speed/48)-curvePush*.075;playerVelocity*=.82;playerX+=playerVelocity;distance+=speed;if(Math.abs(playerX)>.88)end();score.textContent=Math.floor(distance/9)+' m'}
+    render();requestAnimationFrame(loop)
+  }loop();
 </script>
 </html>
