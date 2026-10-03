@@ -1,0 +1,2449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="description" content="A physics-based puzzle game where you drop and merge fruits to create larger fruits and score points!">
+    <meta name="theme-color" content="#69abde">
+    
+    <!-- iOS-specific meta tags for cache control -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    
+    <title>Fruit Merge Game</title>
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" sizes="256x256" href="assets/icon.png">
+    <link rel="shortcut icon" href="assets/icon.png">
+    
+    <!-- Apple Touch Icon -->
+    <link rel="apple-touch-icon" href="assets/icon.png">
+    
+    <!-- Web App Manifest -->
+    <link rel="manifest" href="manifest.json">
+    
+    <!-- Load Tailwind CSS -->
+    <link rel="stylesheet" href="css/tailwind.min.css">
+    <!-- Load Matter.js Physics Engine -->
+    <script src="matter.min.js"></script>
+
+    <!-- Load font -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Chewy&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            /* Layout dimensions */
+            --header-height: 72px;
+            --footer-height: 55px;
+            --fixed-rows-total: 127px; /* header + footer */
+            --aspect-ratio: 2/3;
+        }
+        
+        html, body {
+            overflow: hidden;
+            height: 100%;
+            width: 100%;
+            font-family: 'Inter', sans-serif;
+            touch-action: none; 
+            /* Prevent text selection */
+            user-select: none;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            /* Prevent iOS callout menu */
+            -webkit-touch-callout: none;
+        }
+        
+        /* Prevent double-tap zoom on all buttons and interactive elements */
+        button, a, input, select, textarea {
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+        }
+        
+        body {
+            margin: 0;
+            padding: 0;
+            background: linear-gradient(to top, #7b9f2c, #7b9f2c, 60px, #77934f, 125px, #69abde, 130px, #69abde);
+        }
+
+        #game-container {
+            /* Logic: Width = (Total Height - Fixed Rows) * Aspect Ratio 
+               Fixed rows total = var(--header-height) + var(--footer-height) = var(--fixed-rows-total)
+               Aspect Ratio = var(--aspect-ratio)
+            */
+            /* Use 100dvh (dynamic viewport height) to respect actual visible viewport excluding browser UI */
+            /* Fallback to 100vh for older browsers */
+            height: 100vh;
+            height: 100dvh;
+            width: calc((100vh - var(--fixed-rows-total)) * var(--aspect-ratio));
+            width: calc((100dvh - var(--fixed-rows-total)) * var(--aspect-ratio));
+            max-width: 100vw; /* Ensure container never exceeds viewport width on iOS Safari */
+            
+            margin: 0 auto; /* Centers the container */
+            display: flex;
+            flex-direction: column;
+            
+            position: relative;
+            
+            /* Prevent double-tap zoom on iOS Safari */
+            touch-action: manipulation;
+        }
+
+        #game-wrapper {
+            /* Row 2: Fills the calculated space, enforcing the ratio */
+            flex-grow: 1;
+            position: relative;
+            overflow: hidden;
+            background: #f3f4f6;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            
+            /* Prevent double-tap zoom on iOS Safari */
+            touch-action: manipulation;
+        }
+
+        #game-header {
+            /* Row 1: Fixed height */
+            height: var(--header-height);
+            position: relative;
+            z-index: 20;
+            pointer-events: auto;
+            background-color: #69abde;
+            padding: 8px 16px 0px 16px;
+        }
+        
+        #preview-fruit {
+            position: absolute;
+            left: 50%;
+            z-index: 10;
+            pointer-events: none;
+            opacity: 0.8;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            backface-visibility: hidden;
+            image-rendering: auto;
+        }
+
+        #game-canvas-wrapper {
+            /* Game canvas maintains 2:3 aspect ratio within available space */
+            position: relative;
+            width: auto;
+            height: 100%;
+            aspect-ratio: 2 / 3;
+            z-index: 1;
+            /* Replace gradient with world.png background that stretches to fit */
+            background-image: url('assets/world.png');
+            background-size: 100% 100%;
+            background-position: center;
+            background-repeat: no-repeat;
+        }
+        
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        
+        #loading-screen {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: transparent;
+            z-index: 99;
+            font-size: 1.5rem;
+            color: #1f2937; /* text-gray-800 */
+            font-weight: 500;
+        }
+
+        #pause-modal {
+            /* Overlay spans entire container */
+            position: absolute;
+            inset: 0;
+            transition: opacity 0.3s ease, transform 0.3s ease;
+            pointer-events: auto;
+        }
+      
+        #pause-modal h2 {
+          font-family: "Chewy", system-ui;
+          font-weight: 400;
+          font-style: normal;
+        }
+
+        #pause-modal.hidden {
+            opacity: 0;
+            transform: scale(0.9);
+            pointer-events: none;
+        }
+
+        #game-over-modal {
+            pointer-events: auto;
+        }
+
+        #game-over-modal.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+        
+        #restart-confirm-modal {
+            /* Overlay spans entire container */
+            position: absolute;
+            inset: 0;
+            transition: opacity 0.3s ease, transform 0.3s ease;
+            pointer-events: auto;
+        }
+
+        #restart-confirm-modal.hidden {
+            opacity: 0;
+            transform: scale(0.9);
+            pointer-events: none;
+        }
+        
+        #game-over-text {
+            transition: opacity 0.5s ease;
+            opacity: 0;
+            text-shadow: 0 0 30px white;
+        }
+        
+        #game-over-text.visible {
+            opacity: 1;
+        }
+        
+        #game-over-content {
+            transition: opacity 0.5s ease;
+            opacity: 0;
+        }
+        
+        #game-over-content.visible {
+            opacity: 1;
+        }
+
+        #confetti-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            overflow: hidden;
+            z-index: 15; 
+        }
+        .confetti-piece {
+            position: absolute;
+            background-color: white; 
+            border-radius: 50%;
+            opacity: 1;
+            transition: transform 0.8s ease-out, opacity 0.8s ease-out;
+        }
+        
+        #fruit-evolution-row {
+            /* Row 3: Fixed height */
+            height: var(--footer-height);
+            width: 100%;
+            background-color: #7b9f2c;
+            padding: 4px 8px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-wrap: nowrap;
+            gap: 4px;
+            overflow-x: hidden;
+            overflow-y: hidden;
+            pointer-events: none;
+            flex-shrink: 0;
+        }
+        
+        .evolution-fruit {
+            flex-shrink: 1;
+            width: 30px;
+            height: 30px;
+            max-width: 40px;
+            border-radius: 50%;
+            background-size: contain;
+            background-position: center;
+            background-repeat: no-repeat;
+            transition: filter 0.5s ease, opacity 0.5s ease;
+            border: 2px solid rgba(0, 0, 0, 0.1);
+            /* Enable smooth image rendering for better quality */
+            image-rendering: auto;
+        }
+        
+        .evolution-fruit.locked {
+            filter: blur(4px) grayscale(0.5);
+            opacity: 0.4;
+        }
+        
+        .evolution-fruit.unlocked {
+            filter: none;
+            opacity: 1;
+        }
+        
+        .evolution-fruit.current-game-locked {
+            filter: blur(4px) grayscale(0.5);
+            opacity: 0.4;
+        }
+        
+        #booster-indicator {
+            position: absolute;
+            /* Position will be set dynamically by JavaScript */
+            left: 8px;
+            z-index: 25;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #FFD700 0%, #FFA500 100%);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: opacity 0.3s ease, top 0.3s ease;
+            pointer-events: auto;
+            cursor: help;
+        }
+        
+        #booster-indicator.disabled {
+            opacity: 0.3;
+            filter: grayscale(1);
+        }
+        
+        #booster-indicator svg {
+            width: 24px;
+            height: 24px;
+            fill: white;
+        }
+        
+        #booster-tooltip {
+            position: absolute;
+            left: 56px; /* Position to the right of the indicator */
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            line-height: 1.5;
+            max-width: 220px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            z-index: 26;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s ease;
+        }
+        
+        #booster-tooltip.visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        
+        #booster-tooltip::before {
+            content: '';
+            position: absolute;
+            left: -6px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 0;
+            height: 0;
+            border-top: 6px solid transparent;
+            border-bottom: 6px solid transparent;
+            border-right: 6px solid rgba(0, 0, 0, 0.9);
+        }
+    </style>
+</head>
+<body class="text-gray-800">
+
+    <div id="game-container">
+        <!-- Header is first grid row -->
+        <div id="game-header" class="grid grid-cols-4 gap-2">
+            <!-- Burger Menu Icon (left aligned) -->
+            <div class="flex items-center justify-start">
+                <button id="burger-menu-button" class="p-2 bg-transparent hover:bg-orange-100 rounded-lg transition-all group" title="Menu" aria-label="Menu">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-orange-600 group-hover:text-orange-700 transition-colors">
+                        <line x1="3" y1="12" x2="21" y2="12"></line>
+                        <line x1="3" y1="6" x2="21" y2="6"></line>
+                        <line x1="3" y1="18" x2="21" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+            
+            <!-- Score (centered) -->
+            <div class="text-center flex flex-col justify-center">
+                <span class="text-sm opacity-80">Score</span>
+                <div id="score" class="text-2xl font-bold">0</div>
+            </div>
+            
+            <!-- High Score (centered) -->
+            <div class="text-center flex flex-col justify-center">
+                <span class="text-sm opacity-80">High Score</span>
+                <div id="high-score" class="text-2xl font-bold">0</div>
+            </div>
+            
+            <!-- Next Fruit Icon (right aligned) -->
+            <div class="text-center flex flex-col justify-center items-end">
+                <span class="text-sm opacity-80">Next</span>
+                <div id="next-fruit" class="flex justify-center items-center h-9">
+                    <img id="next-fruit-img" src="" alt="Next fruit" class="max-h-9 max-w-9 object-contain" style="width: 24px; height: 24px;">
+                </div>
+            </div>
+        </div>
+        
+        <!-- Game area is second grid row -->
+        <div id="game-wrapper">
+            
+            <div id="loading-screen">Loading...</div>
+            
+            <!-- Booster Indicator -->
+            <div id="booster-indicator" class="disabled">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                    <path d="M13 2L3 14h8l-1 8 10-12h-8l1-8z"/>
+                </svg>
+            </div>
+            
+            <!-- Booster Tooltip -->
+            <div id="booster-tooltip">
+                <strong>Speed Booster</strong><br>
+                Drop a fruit, then quickly tap again within 0.2s to boost its speed 3x!<br><br>
+                <em>Unlocks at Lemon (Level 5)</em><br>
+                <em>5 drop cooldown after use</em>
+            </div>
+            
+            <div id="preview-fruit"></div>
+            <div id="game-canvas-wrapper"></div>
+            <div id="confetti-container"></div>
+
+            <!-- --- FIX: Bright game over modal --- -->
+            <div id="game-over-modal" class="hidden absolute inset-0 z-20 flex flex-col justify-center items-center text-center p-8">
+                <h2 id="game-over-text" class="text-5xl font-bold text-red-500 mb-4">Game Over</h2>
+                <div id="game-over-content" class="bg-white text-gray-900 rounded-lg p-8 flex flex-col items-center shadow-2xl">
+                    <p class="text-xl mb-2">Final Score:</p>
+                    <div id="final-score" class="text-4xl font-bold mb-8">0</div>
+                    <!-- --- FIX: Playful button color --- -->
+                    <div class="flex gap-3 flex-col w-full max-w-xs">
+                        <button id="restart-button" class="px-6 py-3 bg-green-500 text-white font-bold rounded-lg shadow-lg text-xl hover:bg-green-400 transition-all">
+                            Restart
+                        </button>
+                        <button id="share-button" class="px-6 py-3 bg-blue-500 text-white font-bold rounded-lg shadow-lg text-xl hover:bg-blue-400 transition-all flex items-center justify-center gap-2">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="18" cy="5" r="3"></circle>
+                                <circle cx="6" cy="12" r="3"></circle>
+                                <circle cx="18" cy="19" r="3"></circle>
+                                <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
+                                <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+                            </svg>
+                            <span>Share Score</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Evolution row is third grid row -->
+        <div id="fruit-evolution-row"></div>
+
+        <!-- Pause/Start Modal -->
+        <div id="pause-modal" class="absolute inset-0 bg-white/70 text-gray-900 backdrop-blur-md z-30 flex flex-col justify-center items-center text-center p-8">
+            <img src="assets/10-watermelon.png" alt="Watermelon Logo" class="w-8 h-8 mb-4 object-contain" style="max-width: 64px; max-height: 64px; margin-bottom: 2rem;">
+            <h2 id="pause-modal-title" class="text-5xl font-bold text-orange-500 mb-4" style="margin-bottom: 2rem;">Fruit Merge</h2>
+            <p id="pause-modal-description" class="text-lg text-gray-700 max-w-md mb-8 leading-relaxed">
+                Drop and merge identical fruits to create bigger ones! Match two fruits of the same type to evolve them. Keep merging to score points and reach the watermelon. Don't let fruits stack above the red line!
+            </p>
+            <div class="flex flex-col gap-3 w-full max-w-xs">
+                <button id="resume-button" class="px-8 py-4 bg-green-500 text-white font-bold rounded-lg shadow-lg text-2xl hover:bg-green-400 transition-all">
+                    Start
+                </button>
+                <button id="restart-menu-button" class="hidden px-6 py-3 bg-orange-500 text-white font-bold rounded-lg shadow-lg text-xl hover:bg-orange-400 transition-all">
+                    Restart
+                </button>
+                <div class="flex gap-3">
+                    <button id="music-toggle" class="flex-1 px-4 py-3 bg-blue-500 text-white font-bold rounded-lg shadow-lg text-lg hover:bg-blue-400 transition-all flex items-center justify-center gap-2">
+                        <span>Music:</span>
+                        <span id="music-status">On</span>
+                    </button>
+                    <button id="sounds-toggle" class="flex-1 px-4 py-3 bg-blue-500 text-white font-bold rounded-lg shadow-lg text-lg hover:bg-blue-400 transition-all flex items-center justify-center gap-2">
+                        <span>Sounds:</span>
+                        <span id="sounds-status">On</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Restart Confirmation Modal -->
+        <div id="restart-confirm-modal" class="hidden absolute inset-0 bg-white/70 text-gray-900 backdrop-blur-md z-40 flex flex-col justify-center items-center text-center p-8">
+            <h2 class="text-3xl font-bold text-orange-600 mb-4">Restart Game?</h2>
+            <p class="text-lg mb-8">Your current progress will be lost.</p>
+            <div class="flex gap-4">
+                <button id="restart-confirm-yes" class="px-6 py-3 bg-red-500 text-white font-bold rounded-lg shadow-lg text-xl hover:bg-red-400 transition-all">
+                    Yes, Restart
+                </button>
+                <button id="restart-confirm-no" class="px-6 py-3 bg-gray-500 text-white font-bold rounded-lg shadow-lg text-xl hover:bg-gray-400 transition-all">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        // Import Web Audio BGM controller
+        import { createBgmController } from './audio/web-audio-bgm.js';
+
+        // Wait for the *entire page* to load
+        window.onload = () => {
+            
+            // --- DOM Elements ---
+            const gameContainer = document.getElementById('game-container');
+            const gameWrapper = document.getElementById('game-wrapper');
+            const headerEl = document.getElementById('game-header');
+            const canvasWrapper = document.getElementById('game-canvas-wrapper');
+            const loadingScreen = document.getElementById('loading-screen');
+            const previewFruitEl = document.getElementById('preview-fruit');
+            const confettiContainer = document.getElementById('confetti-container');
+            const pauseModal = document.getElementById('pause-modal');
+            const resumeButton = document.getElementById('resume-button');
+            const burgerMenuButton = document.getElementById('burger-menu-button');
+            const restartMenuButton = document.getElementById('restart-menu-button');
+            const musicToggle = document.getElementById('music-toggle');
+            const musicStatus = document.getElementById('music-status');
+            const soundsToggle = document.getElementById('sounds-toggle');
+            const soundsStatus = document.getElementById('sounds-status');
+            
+            const scoreEl = document.getElementById('score');
+            const highScoreEl = document.getElementById('high-score');
+            const nextFruitEl = document.getElementById('next-fruit');
+            const nextFruitImgEl = document.getElementById('next-fruit-img');
+            const gameOverModal = document.getElementById('game-over-modal');
+            const gameOverText = document.getElementById('game-over-text');
+            const gameOverContent = document.getElementById('game-over-content');
+            const finalScoreEl = document.getElementById('final-score');
+            const restartButton = document.getElementById('restart-button');
+            const shareButton = document.getElementById('share-button');
+            const restartConfirmModal = document.getElementById('restart-confirm-modal');
+            const restartConfirmYes = document.getElementById('restart-confirm-yes');
+            const restartConfirmNo = document.getElementById('restart-confirm-no');
+            const fruitEvolutionRow = document.getElementById('fruit-evolution-row');
+            const boosterIndicator = document.getElementById('booster-indicator');
+            const boosterTooltip = document.getElementById('booster-tooltip');
+
+            // --- Matter.js modules ---
+            const { Engine, Render, Runner, World, Bodies, Body, Events, Composite, Common } = Matter;
+
+            // --- Game Configuration ---
+            
+            const SHOW_COLLISION_OUTLINES = false;
+            
+            const NATIVE_SCALE = 3;
+            const NATIVE_WIDTH = 400 * NATIVE_SCALE;
+            const NATIVE_HEIGHT = 600 * NATIVE_SCALE;
+
+            const FRUITS = [
+                { level: 0, baseRadius: 22 * NATIVE_SCALE, radius: 21.00 * NATIVE_SCALE, offsetX: 0, offsetY: 1.1 * NATIVE_SCALE, color: '#2E3771', imagePath: 'assets/1-blueberry.png', score: 5 },
+                { level: 1, baseRadius: 26 * NATIVE_SCALE, radius: 22.80 * NATIVE_SCALE, offsetX: -0.5, offsetY: 2.6 * NATIVE_SCALE, color: '#842F28', imagePath: 'assets/2-strawberry.png', score: 10 },
+                { level: 2, baseRadius: 34 * NATIVE_SCALE, radius: 32.00 * NATIVE_SCALE, offsetX: 0, offsetY: 1 * NATIVE_SCALE, color: '#612B53', imagePath: 'assets/6-grapes.png', score: 20 },
+                { level: 3, baseRadius: 38 * NATIVE_SCALE, radius: 36.00 * NATIVE_SCALE, offsetX: 0, offsetY: 2 * NATIVE_SCALE, color: '#B06322', imagePath: 'assets/5-orange.png', score: 35 },
+                { level: 4, baseRadius: 48 * NATIVE_SCALE, radius: 45.60 * NATIVE_SCALE, offsetX: 0, offsetY: 6 * NATIVE_SCALE, color: '#952C29', imagePath: 'assets/4-apple.png', score: 55 },
+                { level: 5, baseRadius: 58 * NATIVE_SCALE, radius: 52.00 * NATIVE_SCALE, color: '#AE993B', imagePath: 'assets/3-lemon.png', score: 80 },
+                { level: 6, baseRadius: 66 * NATIVE_SCALE, radius: 60.00 * NATIVE_SCALE, offsetX: 0, offsetY: 6 * NATIVE_SCALE, color: '#8B8A62', imagePath: 'assets/7-cantaloupe.png', score: 110 },
+                { level: 7, baseRadius: 78 * NATIVE_SCALE, radius: 70.00 * NATIVE_SCALE, offsetX: 0, offsetY: 8 * NATIVE_SCALE, color: '#A27620', imagePath: 'assets/9-pineapple.png', score: 150 },
+                { level: 8, baseRadius: 90 * NATIVE_SCALE, radius: 77.00 * NATIVE_SCALE, offsetX: 0, offsetY: 12 * NATIVE_SCALE, color: '#67412B', imagePath: 'assets/8-coconut.png', score: 200 },
+                { level: 9, baseRadius: 102 * NATIVE_SCALE, radius: 94.00 * NATIVE_SCALE, offsetX: 0, offsetY: 8 * NATIVE_SCALE, color: '#5B723A', imagePath: 'assets/10-watermelon.png', score: 300 }
+            ];
+
+            const MAX_FRUIT_LEVEL = FRUITS.length - 1;
+            const STARTING_FRUIT_LEVELS = 4;
+            const GAME_OVER_LINE_Y_PERCENT = 0.18; 
+            const DROP_AREA_Y_PERCENT = 0.1; 
+            const BASE_WALL_THICKNESS = 40 * NATIVE_SCALE;
+            const GROUND_HEIGHT = 48 * NATIVE_SCALE; // 20% taller than walls (matches world.png: 120px vs 100px)
+            const DROP_COOLDOWN_MS = 400;
+            const HIGHSCORE_KEY = 'fruit-merge-highscore';
+            const GAME_STATE_KEY = 'fruit-merge-gamestate';
+            const ACHIEVEMENTS_KEY = 'fruit-merge-achievements';
+            const MUSIC_ENABLED_KEY = 'fruit-merge-music-enabled';
+            const SOUNDS_ENABLED_KEY = 'fruit-merge-sounds-enabled';
+            
+            const fruitImages = {};
+            const imageLoadPromises = [];
+            
+            FRUITS.forEach(fruit => {
+                const loadPromise = new Promise((resolve) => {
+                    const img = new Image();
+                    
+                    img.onload = () => {
+                        fruitImages[fruit.level] = img;
+                        resolve();
+                    };
+                    
+                    img.onerror = () => {
+                        fruitImages[fruit.level] = img;
+                        resolve();
+                    };
+                    
+                    img.src = fruit.imagePath;
+                });
+                
+                imageLoadPromises.push(loadPromise);
+            });
+            
+
+            // --- Game State ---
+            let engine, render, runner, world;
+            let score = 0;
+            let highScore = 0; 
+            let currentFruitLevel = 0;
+            let nextFruitLevel = 0;
+            let isGameOver = false;
+            let isDropping = false; 
+            let lastDropTime = 0;
+            let collisionTimeout = null;
+            let spawnTimeout = null;
+            let gameOverTimeouts = [];
+            let currentPreviewX = 0; 
+            let saveCounter = 0; 
+            let achievedFruits = new Set();
+            let currentGameMaxFruit = -1;
+            
+            let bodiesToRemoveSet = new Set();
+            let bodiesToAddArray = [];
+            
+            let isWarningActive = false;
+            let warningLineThickness = 2;
+            let warningAnimationFrame = 0;
+            let lastWarningSound = 0;
+            
+            let lastDroppedFruit = null;
+            const SPEED_BOOST_WINDOW = 200;
+            const NORMAL_DROP_VELOCITY = 10;
+            const BOOSTED_DROP_VELOCITY = 50;
+            
+            let boosterCooldownCount = 0;
+            const BOOSTER_COOLDOWN_DROPS = 5;
+            let boosterUnlocked = false;
+            const BOOSTER_UNLOCK_LEVEL = 5;
+            let boosterReenableTimeout = null;
+            let isGameOverAnimating = false; // Flag to prevent actions during game over animation
+            
+            function updateBoosterIndicator() {
+                if (!boosterUnlocked) {
+                    boosterIndicator.classList.add('disabled');
+                } else if (boosterCooldownCount > 0) {
+                    boosterIndicator.classList.add('disabled');
+                } else {
+                    boosterIndicator.classList.remove('disabled');
+                }
+            }
+            
+            function updateBoosterIndicatorPosition() {
+                // Position booster indicator in the middle of the game area above the red line
+                const gameOverLineViewportY = worldToViewportY(gameOverLineY);
+                const centerY = gameOverLineViewportY / 2 - 20; // 20=half width
+                boosterIndicator.style.top = `${centerY}px`;
+                boosterTooltip.style.top = `${centerY}px`;
+            }
+            
+            function toggleBoosterTooltip(e) {
+                e.stopPropagation();
+                const isVisible = boosterTooltip.classList.contains('visible');
+                if (isVisible) {
+                    hideBoosterTooltip();
+                } else {
+                    showBoosterTooltip();
+                }
+            }
+            
+            function showBoosterTooltip() {
+                boosterTooltip.classList.add('visible');
+                setTimeout(() => {
+                    document.addEventListener('click', hideBoosterTooltipOnClickOutside);
+                }, 0);
+            }
+            
+            function hideBoosterTooltip() {
+                boosterTooltip.classList.remove('visible');
+                document.removeEventListener('click', hideBoosterTooltipOnClickOutside);
+            }
+            
+            function hideBoosterTooltipOnClickOutside(e) {
+                if (!boosterIndicator.contains(e.target)) {
+                    hideBoosterTooltip();
+                }
+            }
+
+            // --- Audio System ---
+            let audioContext = null;
+            let bgmController = null;
+            let isMusicEnabled = true;
+            let areSoundsEnabled = true;
+            let isMusicPaused = false;
+            let musicFadeInterval = null;
+
+            // --- Load Audio Preferences ---
+            function loadAudioPreferences() {
+                const savedMusicEnabled = localStorage.getItem(MUSIC_ENABLED_KEY);
+                const savedSoundsEnabled = localStorage.getItem(SOUNDS_ENABLED_KEY);
+                
+                if (savedMusicEnabled !== null) {
+                    isMusicEnabled = savedMusicEnabled === 'true';
+                }
+                if (savedSoundsEnabled !== null) {
+                    areSoundsEnabled = savedSoundsEnabled === 'true';
+                }
+            }
+            
+            // --- Save Audio Preferences ---
+            function saveAudioPreferences() {
+                localStorage.setItem(MUSIC_ENABLED_KEY, isMusicEnabled.toString());
+                localStorage.setItem(SOUNDS_ENABLED_KEY, areSoundsEnabled.toString());
+            }
+
+            function initAudioContext() {
+                if (!audioContext) {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                }
+            }
+            
+            function initBackgroundMusic() {
+                if (!bgmController) {
+                    try {
+                        // Create Web Audio BGM controller with default gain of 0.25 (~-12dB)
+                        bgmController = createBgmController({
+                            audioElOrSrc: 'assets/children-music-loop-creative-fun-262427.mp3',
+                            defaultGain: 0.25,
+                            loop: true
+                        });
+                        
+                        bgmController.unlockOnUserGesture();
+                    } catch (error) {
+                    }
+                }
+            }
+
+            function playDropSound() {
+                if (!areSoundsEnabled) return;
+                initAudioContext();
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(400, audioContext.currentTime);
+                oscillator.frequency.exponentialRampToValueAtTime(200, audioContext.currentTime + 0.1);
+                
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+                
+                oscillator.start(audioContext.currentTime);
+                oscillator.stop(audioContext.currentTime + 0.1);
+            }
+
+            function playMergeSound() {
+                if (!areSoundsEnabled) return;
+                initAudioContext();
+                const oscillator1 = audioContext.createOscillator();
+                const oscillator2 = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator1.connect(gainNode);
+                oscillator2.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                oscillator1.type = 'sine';
+                oscillator2.type = 'sine';
+                
+                oscillator1.frequency.setValueAtTime(523.25, audioContext.currentTime);
+                oscillator1.frequency.setValueAtTime(659.25, audioContext.currentTime + 0.05);
+                oscillator1.frequency.setValueAtTime(783.99, audioContext.currentTime + 0.1);
+                
+                oscillator2.frequency.setValueAtTime(523.25 * 2, audioContext.currentTime);
+                oscillator2.frequency.setValueAtTime(659.25 * 2, audioContext.currentTime + 0.05);
+                oscillator2.frequency.setValueAtTime(783.99 * 2, audioContext.currentTime + 0.1);
+                
+                gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                
+                oscillator1.start(audioContext.currentTime);
+                oscillator2.start(audioContext.currentTime);
+                oscillator1.stop(audioContext.currentTime + 0.3);
+                oscillator2.stop(audioContext.currentTime + 0.3);
+            }
+
+            function playWarningSound() {
+                if (!areSoundsEnabled) return;
+                initAudioContext();
+                
+                const now = Date.now();
+                if (now - lastWarningSound < 2000) return;
+                lastWarningSound = now;
+                
+                const beeps = [
+                    { freq: 440, start: 0.0, duration: 0.1 },
+                    { freq: 440, start: 0.15, duration: 0.1 }
+                ];
+                
+                beeps.forEach(beep => {
+                    const oscillator = audioContext.createOscillator();
+                    const gainNode = audioContext.createGain();
+                    
+                    oscillator.connect(gainNode);
+                    gainNode.connect(audioContext.destination);
+                    
+                    oscillator.type = 'sine';
+                    oscillator.frequency.setValueAtTime(beep.freq, audioContext.currentTime + beep.start);
+                    
+                    gainNode.gain.setValueAtTime(0, audioContext.currentTime + beep.start);
+                    gainNode.gain.linearRampToValueAtTime(0.3, audioContext.currentTime + beep.start + 0.02);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime + beep.start + beep.duration - 0.02);
+                    gainNode.gain.linearRampToValueAtTime(0.01, audioContext.currentTime + beep.start + beep.duration);
+                    
+                    oscillator.start(audioContext.currentTime + beep.start);
+                    oscillator.stop(audioContext.currentTime + beep.start + beep.duration);
+                });
+            }
+
+            function playBoosterAvailableSound() {
+                if (!areSoundsEnabled) return;
+                initAudioContext();
+                
+                const notes = [
+                    { freq: 523.25, start: 0.0, duration: 0.1 },
+                    { freq: 659.25, start: 0.08, duration: 0.1 },
+                    { freq: 783.99, start: 0.16, duration: 0.15 }
+                ];
+                
+                notes.forEach(note => {
+                    const oscillator = audioContext.createOscillator();
+                    const gainNode = audioContext.createGain();
+                    
+                    oscillator.connect(gainNode);
+                    gainNode.connect(audioContext.destination);
+                    
+                    oscillator.type = 'sine';
+                    oscillator.frequency.setValueAtTime(note.freq, audioContext.currentTime + note.start);
+                    
+                    const fadeIn = 0.02;
+                    const fadeOut = 0.03;
+                    const noteEnd = note.start + note.duration;
+                    
+                    gainNode.gain.setValueAtTime(0, audioContext.currentTime + note.start);
+                    gainNode.gain.linearRampToValueAtTime(0.25, audioContext.currentTime + note.start + fadeIn);
+                    gainNode.gain.setValueAtTime(0.25, audioContext.currentTime + noteEnd - fadeOut);
+                    gainNode.gain.linearRampToValueAtTime(0.01, audioContext.currentTime + noteEnd);
+                    
+                    oscillator.start(audioContext.currentTime + note.start);
+                    oscillator.stop(audioContext.currentTime + noteEnd);
+                });
+            }
+
+            function playBoosterUsedSound() {
+                if (!areSoundsEnabled) return;
+                initAudioContext();
+                
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                oscillator.type = 'sawtooth';
+                
+                oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
+                oscillator.frequency.exponentialRampToValueAtTime(200, audioContext.currentTime + 0.15);
+                
+                gainNode.gain.setValueAtTime(0, audioContext.currentTime);
+                gainNode.gain.linearRampToValueAtTime(0.3, audioContext.currentTime + 0.02);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.15);
+                
+                oscillator.start(audioContext.currentTime);
+                oscillator.stop(audioContext.currentTime + 0.15);
+            }
+
+            function playGameOverSound() {
+                if (!areSoundsEnabled) return;
+                initAudioContext();
+                
+                const notes = [
+                    { freq: 329.63, start: 0.0, duration: 0.4 },
+                    { freq: 261.63, start: 0.35, duration: 0.4 },
+                    { freq: 220.00, start: 0.70, duration: 0.5 },
+                    { freq: 174.61, start: 1.15, duration: 0.65 }
+                ];
+                
+                notes.forEach(note => {
+                    const oscillator = audioContext.createOscillator();
+                    const gainNode = audioContext.createGain();
+                    
+                    oscillator.connect(gainNode);
+                    gainNode.connect(audioContext.destination);
+                    
+                    oscillator.type = 'triangle';
+                    oscillator.frequency.setValueAtTime(note.freq, audioContext.currentTime + note.start);
+                    
+                    const fadeIn = 0.05;
+                    const fadeOut = 0.1;
+                    const noteEnd = note.start + note.duration;
+                    
+                    gainNode.gain.setValueAtTime(0, audioContext.currentTime + note.start);
+                    gainNode.gain.linearRampToValueAtTime(0.25, audioContext.currentTime + note.start + fadeIn);
+                    gainNode.gain.setValueAtTime(0.25, audioContext.currentTime + noteEnd - fadeOut);
+                    gainNode.gain.linearRampToValueAtTime(0.01, audioContext.currentTime + noteEnd);
+                    
+                    oscillator.start(audioContext.currentTime + note.start);
+                    oscillator.stop(audioContext.currentTime + noteEnd);
+                });
+            }
+
+            function startBackgroundMusic() {
+                if (!isMusicEnabled) return;
+                initBackgroundMusic();
+                if (bgmController && !isMusicPaused) {
+                    bgmController.play().catch(() => {});
+                }
+            }
+
+            function stopBackgroundMusic() {
+                if (bgmController && bgmController.isPlaying()) {
+                    isMusicPaused = true;
+                    
+                    if (musicFadeInterval) {
+                        clearInterval(musicFadeInterval);
+                    }
+                    
+                    musicFadeInterval = setInterval(() => {
+                        const currentGain = bgmController.getGainLinear();
+                        if (currentGain > 0.01) {
+                            bgmController.setGainLinear(currentGain - 0.01);
+                        } else {
+                            bgmController.pause();
+                            bgmController.setGainLinear(0.25);
+                            clearInterval(musicFadeInterval);
+                            musicFadeInterval = null;
+                        }
+                    }, 50);
+                }
+            }
+            function resumeBackgroundMusic() {
+                if (bgmController && isMusicPaused && !isGameOver) {
+                    isMusicPaused = false;
+                    bgmController.setGainLinear(0.25);
+                    bgmController.play().catch(() => {});
+                }
+            }
+
+            // --- Game Dimensions ---
+            let viewportWidth = 0;
+            let viewportHeight = 0;
+            let headerHeight = 0;
+            
+            const gameWorldWidth = NATIVE_WIDTH;
+            const gameWorldHeight = NATIVE_HEIGHT;
+            const gameOverLineY = gameWorldHeight * GAME_OVER_LINE_Y_PERCENT;
+            const dropAreaY = gameWorldHeight * DROP_AREA_Y_PERCENT;
+            const wallThickness = BASE_WALL_THICKNESS; 
+
+            // --- Initialize Fruit Evolution Row ---
+            function initFruitEvolutionRow() {
+                fruitEvolutionRow.innerHTML = '';
+                
+                // Create evolution fruit icons
+                FRUITS.forEach((fruit, index) => {
+                    const fruitIcon = document.createElement('div');
+                    fruitIcon.className = 'evolution-fruit';
+                    fruitIcon.style.backgroundImage = `url('${fruit.imagePath}')`;
+                    fruitIcon.setAttribute('data-level', index);
+                    
+                    // Check if fruit has been achieved in all-time
+                    if (achievedFruits.has(index)) {
+                        fruitIcon.classList.add('unlocked');
+                    } else {
+                        fruitIcon.classList.add('locked');
+                    }
+                    
+                    // Additionally blur fruits larger than current game max
+                    if (index > currentGameMaxFruit) {
+                        fruitIcon.classList.add('current-game-locked');
+                    }
+                    
+                    fruitEvolutionRow.appendChild(fruitIcon);
+                });
+                
+                // Scale icons to fit in one row
+                scaleEvolutionIcons();
+            }
+            
+            // --- Update Evolution Row ---
+            function updateEvolutionRow(fruitLevel) {
+                // Mark this fruit level and all lower levels as achieved
+                for (let i = 0; i <= fruitLevel; i++) {
+                    achievedFruits.add(i);
+                }
+                
+                // Update the current game maximum
+                if (fruitLevel > currentGameMaxFruit) {
+                    currentGameMaxFruit = fruitLevel;
+                }
+                
+                // Unlock booster when reaching fruit level 5 (lemon) or higher
+                if (fruitLevel >= BOOSTER_UNLOCK_LEVEL && !boosterUnlocked) {
+                    boosterUnlocked = true;
+                    updateBoosterIndicator();
+                    playBoosterAvailableSound(); // Play sound when booster unlocks
+                }
+                
+                // Save achievements to localStorage
+                localStorage.setItem(ACHIEVEMENTS_KEY, JSON.stringify(Array.from(achievedFruits)));
+                
+                // Update the visual display
+                const icons = fruitEvolutionRow.querySelectorAll('.evolution-fruit');
+                icons.forEach((icon, index) => {
+                    if (achievedFruits.has(index)) {
+                        icon.classList.remove('locked');
+                        icon.classList.add('unlocked');
+                    }
+                    
+                    // Blur fruits larger than current game max
+                    if (index > currentGameMaxFruit) {
+                        icon.classList.add('current-game-locked');
+                    } else {
+                        icon.classList.remove('current-game-locked');
+                    }
+                });
+            }
+            
+            // --- Scale Evolution Icons to fit in one row ---
+            function scaleEvolutionIcons() {
+                const rowWidth = fruitEvolutionRow.clientWidth;
+                if (!rowWidth || rowWidth === 0) return; // Guard against zero width
+                
+                const numFruits = FRUITS.length;
+                const gap = 4; // gap between icons in pixels
+                const padding = 16; // 8px padding on each side
+                
+                // Calculate available width for icons
+                const availableWidth = rowWidth - padding - (gap * (numFruits - 1));
+                
+                // Calculate maximum icon size that fits, with minimum of 20px
+                const calculatedSize = Math.floor(availableWidth / numFruits);
+                const maxIconSize = Math.max(20, Math.min(40, calculatedSize));
+                
+                // Apply the calculated size to all icons
+                const icons = fruitEvolutionRow.querySelectorAll('.evolution-fruit');
+                icons.forEach(icon => {
+                    icon.style.width = `${maxIconSize}px`;
+                    icon.style.height = `${maxIconSize}px`;
+                    icon.style.maxWidth = `${maxIconSize}px`;
+                });
+            }
+            
+            // --- Load Achievements ---
+            function loadAchievements() {
+                const savedAchievements = localStorage.getItem(ACHIEVEMENTS_KEY);
+                if (savedAchievements) {
+                    try {
+                        const achievementsArray = JSON.parse(savedAchievements);
+                        achievedFruits = new Set(achievementsArray);
+                    } catch (e) {
+                        achievedFruits = new Set();
+                    }
+                } else {
+                    achievedFruits = new Set([0]);
+                }
+            } 
+
+            
+            const layoutCheckInterval = setInterval(() => {
+                const w = gameWrapper.clientWidth;
+                const h = gameWrapper.clientHeight;
+                const hh = headerEl.clientHeight;
+                
+                if (w > 0 && h > 0 && hh > 0) {
+                    clearInterval(layoutCheckInterval);
+                    loadingScreen.style.display = 'none';
+                    loadAudioPreferences(); // Load audio preferences first
+                    initGame(); 
+                    setupResizeObserver();
+                    setupVisibilityHandlers();
+                    setupPauseModal();
+                }
+            }, 50);
+
+            // --- Game Initialization ---
+            function initGame() {
+                // Load achievements first
+                loadAchievements();
+                
+                // With CSS Grid and aspect-ratio, the canvas wrapper automatically maintains 2:3 ratio
+                // Just read the actual dimensions that CSS has set
+                viewportWidth = canvasWrapper.clientWidth;
+                viewportHeight = canvasWrapper.clientHeight;
+                headerHeight = headerEl.clientHeight;
+                
+                // No manual positioning needed - CSS handles it all
+
+                currentPreviewX = gameWorldWidth / 2;
+
+                isGameOver = false;
+                isDropping = false;
+                isGameOverAnimating = false; // Reset animation flag
+                lastDropTime = 0; // Reset drop time on new game
+                lastDroppedFruit = null; // Reset last dropped fruit reference
+                saveCounter = 0;
+                currentGameMaxFruit = -1; // Reset current game max on new game
+                boosterCooldownCount = 0; // Reset booster cooldown
+                boosterUnlocked = false; // Reset booster unlock state
+                if (boosterReenableTimeout) {
+                    clearTimeout(boosterReenableTimeout);
+                    boosterReenableTimeout = null;
+                }
+                updateBoosterIndicator(); // Update indicator display
+                
+                // Reset warning state
+                isWarningActive = false;
+                warningLineThickness = 2;
+                warningAnimationFrame = 0;
+                lastWarningSound = 0;
+                
+                highScore = parseInt(localStorage.getItem(HIGHSCORE_KEY) || '0');
+                highScoreEl.textContent = highScore;
+                
+                gameOverModal.classList.add('hidden');
+                gameOverText.classList.remove('visible');
+                gameOverContent.classList.remove('visible');
+                
+                bodiesToRemoveSet.clear();
+                bodiesToAddArray = [];
+
+                engine = Engine.create();
+                world = engine.world;
+                world.gravity.y = 1.2; 
+
+                render = Render.create({
+                    element: canvasWrapper, 
+                    engine: engine,
+                    options: {
+                        width: gameWorldWidth,
+                        height: gameWorldHeight,
+                        wireframes: false,
+                        background: 'transparent'
+                    }
+                });
+                
+                // Set up render bounds to show the full game world
+                render.bounds.min.x = 0;
+                render.bounds.min.y = 0;
+                render.bounds.max.x = gameWorldWidth;
+                render.bounds.max.y = gameWorldHeight;
+
+                runner = Runner.create();
+                World.clear(world, false);
+
+                const wallOptions = {
+                    isStatic: true,
+                    restitution: 0.1,
+                    friction: 0.2,
+                    render: { 
+                        fillStyle: 'transparent', // Make transparent so we can draw textures
+                        strokeStyle: 'transparent',
+                        lineWidth: 0
+                    }
+                };
+
+                // Calculate wall height - walls only extend from game over line (red line) to bottom
+                const wallHeight = gameWorldHeight - gameOverLineY;
+                const wallCenterY = gameOverLineY + wallHeight / 2;
+                
+                World.add(world, [
+                    Bodies.rectangle(gameWorldWidth / 2, gameWorldHeight - GROUND_HEIGHT / 2, gameWorldWidth, GROUND_HEIGHT, { ...wallOptions, label: 'ground' }),
+                    Bodies.rectangle(wallThickness / 2, wallCenterY, wallThickness, wallHeight, { ...wallOptions, label: 'wall-left' }),
+                    Bodies.rectangle(gameWorldWidth - wallThickness / 2, wallCenterY, wallThickness, wallHeight, { ...wallOptions, label: 'wall-right' })
+                ]);
+
+                const gameOverLine = Bodies.rectangle(
+                    gameWorldWidth / 2,
+                    gameOverLineY,
+                    gameWorldWidth,
+                    2,
+                    {
+                        isStatic: true,
+                        isSensor: true,
+                        label: 'gameOverLine',
+                        render: { 
+                            fillStyle: 'transparent', // Make invisible - we'll draw it manually
+                            strokeStyle: 'transparent',
+                            lineWidth: 0
+                        } 
+                    }
+                );
+                World.add(world, gameOverLine);
+
+                const savedStateString = localStorage.getItem(GAME_STATE_KEY);
+                let loadedState = null;
+                if (savedStateString) {
+                    try {
+                        loadedState = JSON.parse(savedStateString);
+                    } catch (e) {
+                        localStorage.removeItem(GAME_STATE_KEY); 
+                    }
+                }
+
+                if (loadedState) {
+                    // No need to scale positions anymore - game world is fixed size
+                    
+                    loadedState.fruits.forEach(fruit => {
+                        const body = createFruitBody(
+                            fruit.x, 
+                            fruit.y, 
+                            fruit.level
+                        );
+                        
+                        Body.setAngle(body, fruit.angle);
+                        Body.setVelocity(body, { x: fruit.velocityX, y: fruit.velocityY });
+                        Body.setAngularVelocity(body, fruit.angularVelocity);
+                        World.add(world, body);
+                        
+                        // Mark this fruit level as achieved and update current game max
+                        updateEvolutionRow(fruit.level);
+                    });
+                    score = loadedState.score;
+
+                    // Restore booster cooldown state
+                    if (loadedState.boosterCooldownCount !== undefined) {
+                        boosterCooldownCount = loadedState.boosterCooldownCount;
+                    }
+                    // Restore booster unlock state
+                    if (loadedState.boosterUnlocked !== undefined) {
+                        boosterUnlocked = loadedState.boosterUnlocked;
+                    }
+                    updateBoosterIndicator();
+
+                    // Restore both current and next fruit levels from saved state
+                    if (loadedState.currentFruitLevel !== undefined) {
+                        // Set nextFruitLevel first since spawnCurrentFruit() uses it
+                        nextFruitLevel = loadedState.currentFruitLevel;
+                        spawnCurrentFruit(); // This will set currentFruitLevel = nextFruitLevel
+                        nextFruitLevel = loadedState.nextFruitLevel; // Then restore the actual next fruit
+                        // Update the next fruit display with the restored value
+                        const nextFruitData = FRUITS[nextFruitLevel];
+                        nextFruitImgEl.src = nextFruitData.imagePath;
+                        nextFruitImgEl.style.display = 'block';
+                    } else {
+                        // Fallback for old save data without currentFruitLevel
+                        nextFruitLevel = loadedState.nextFruitLevel;
+                        spawnCurrentFruit(); 
+                        spawnNextFruit(); 
+                    }
+                    
+                    updateEvolutionRow(nextFruitLevel); 
+                } else {
+                    score = 0;
+                    spawnNextFruit(); 
+                    spawnCurrentFruit(); 
+                    spawnNextFruit(); 
+                }
+                updateScore(score); 
+
+
+                Render.run(render);
+                Runner.run(runner, engine);
+                
+                // Initialize fruit evolution row
+                initFruitEvolutionRow();
+
+                Events.on(render, 'afterRender', () => {
+                    const context = render.context;
+                    const bodies = Composite.allBodies(world);
+
+                    context.save(); 
+                    
+                    // Render fruits on top
+                    // Set image smoothing once for all fruits (performance optimization)
+                    context.imageSmoothingEnabled = true;
+                    context.imageSmoothingQuality = 'high';
+                    
+                    bodies.forEach(body => {
+                        if (body.label !== 'fruit') return;
+
+                        const fruitData = FRUITS[body.fruitLevel];
+                        if (fruitData) {
+                            const radius = fruitData.baseRadius; // Use base radius (game world size)
+                            const img = fruitImages[body.fruitLevel];
+                            
+                            if (img && img.complete) {
+                                // Calculate dimensions preserving aspect ratio
+                                const containerSize = radius * 2;
+                                const imgAspect = img.width / img.height;
+                                
+                                let drawWidth, drawHeight;
+                                if (imgAspect > 1) {
+                                    // Wider than tall
+                                    drawWidth = containerSize;
+                                    drawHeight = containerSize / imgAspect;
+                                } else {
+                                    // Taller than wide or square
+                                    drawHeight = containerSize;
+                                    drawWidth = containerSize * imgAspect;
+                                }
+                                
+                                // Get physics body offset from fruit data
+                                const bodyOffsetX = fruitData.offsetX || 0;
+                                const bodyOffsetY = fruitData.offsetY || 0;
+                                
+                                // Calculate image center offset
+                                const imgCenterX = drawWidth / 2;
+                                const imgCenterY = drawHeight / 2;
+                                
+                                context.save();
+                                context.translate(body.position.x, body.position.y);
+                                context.rotate(body.angle);
+                                // Draw image offset by negative of body offset to maintain visual alignment
+                                // This ensures the image and hitbox rotate together correctly
+                                context.drawImage(img, -imgCenterX - bodyOffsetX, -imgCenterY - bodyOffsetY, drawWidth, drawHeight);
+                                context.restore();
+                            }
+                        }
+                    });
+                    
+                    // Draw collision body outlines if enabled
+                    if (SHOW_COLLISION_OUTLINES) {
+                        bodies.forEach(body => {
+                            if (body.label !== 'fruit') return;
+
+                            const fruitData = FRUITS[body.fruitLevel];
+                            if (fruitData) {
+                                // Get the collision radius and offsets
+                                const collisionRadius = fruitData.radius !== undefined ? fruitData.radius : fruitData.baseRadius;
+                                const offsetX = fruitData.offsetX || 0;
+                                const offsetY = fruitData.offsetY || 0;
+                                
+                                context.save();
+                                
+                                // Set up the dashed white circle style
+                                context.strokeStyle = 'white';
+                                context.lineWidth = 6; // Thick line
+                                context.setLineDash([15, 10]); // Dashed pattern: 15px dash, 10px gap
+                                context.globalAlpha = 0.8; // Slightly transparent
+                                
+                                // Draw circle at the collision body position
+                                context.beginPath();
+                                context.arc(body.position.x, body.position.y, collisionRadius, 0, Math.PI * 2);
+                                context.stroke();
+                                
+                                context.restore();
+                            }
+                        });
+                    }
+                    
+                    // Finally, render the game over line with dynamic styling
+                    if (!isGameOver) {
+                        context.save();
+                        
+                        // Draw glow effect when warning is active
+                        if (isWarningActive) {
+                            // Draw shadow/glow
+                            context.shadowColor = '#FF0000';
+                            context.shadowBlur = 15;
+                            context.shadowOffsetX = 0;
+                            context.shadowOffsetY = 0;
+                            
+                            // Draw multiple passes for stronger glow
+                            for (let i = 0; i < 2; i++) {
+                                context.strokeStyle = '#FF0000';
+                                context.lineWidth = warningLineThickness;
+                                context.globalAlpha = 0.7;
+                                context.beginPath();
+                                context.moveTo(0, gameOverLineY);
+                                context.lineTo(gameWorldWidth, gameOverLineY);
+                                context.stroke();
+                            }
+                        } else {
+                            // Normal red line (no glow)
+                            context.strokeStyle = '#FF0000';
+                            context.lineWidth = warningLineThickness;
+                            context.globalAlpha = 0.5;
+                            context.beginPath();
+                            context.moveTo(0, gameOverLineY);
+                            context.lineTo(gameWorldWidth, gameOverLineY);
+                            context.stroke();
+                        }
+                        
+                        context.restore();
+                    }
+
+                    context.restore(); 
+                });
+                
+                // Update booster indicator position
+                updateBoosterIndicatorPosition();
+                
+                addEventListeners();
+            }
+
+            // --- Fruit Creation ---
+            
+            // Helper functions to convert between viewport and game world coordinates
+            function viewportToWorldX(viewportX) {
+                // Convert viewport X coordinate to game world X coordinate
+                return (viewportX / viewportWidth) * gameWorldWidth;
+            }
+            
+            function viewportToWorldY(viewportY) {
+                // Convert viewport Y coordinate to game world Y coordinate
+                return (viewportY / viewportHeight) * gameWorldHeight;
+            }
+            
+            function worldToViewportX(worldX) {
+                // Convert game world X coordinate to viewport X coordinate
+                return (worldX / gameWorldWidth) * viewportWidth;
+            }
+            
+            function worldToViewportY(worldY) {
+                // Convert game world Y coordinate to viewport Y coordinate
+                return (worldY / gameWorldHeight) * viewportHeight;
+            }
+            
+            function createFruitBody(x, y, level, options = {}) {
+                const fruitData = FRUITS[level];
+                if (!fruitData) return null;
+
+                // Convert hex color to rgba with transparency
+                const hexToRgba = (hex, alpha) => {
+                    const r = parseInt(hex.slice(1, 3), 16);
+                    const g = parseInt(hex.slice(3, 5), 16);
+                    const b = parseInt(hex.slice(5, 7), 16);
+                    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+                };
+
+                const bodyOptions = {
+                    label: 'fruit',
+                    fruitLevel: level,
+                    friction: 0.3,
+                    restitution: 0.2,
+                    density: 0.001,
+                    render: {
+                        // Make circle slightly visible with semi-transparent fill using fruit's color
+                        fillStyle: hexToRgba(fruitData.color, 0.1),
+                        strokeStyle: 'transparent',
+                        lineWidth: 0
+                    },
+                    ...options
+                };
+                
+                // Use radius for collision detection (defaults to baseRadius if not specified)
+                // Use offsetX and offsetY for collision body offset (defaults to 0 if not specified)
+                const radius = fruitData.radius !== undefined ? fruitData.radius : fruitData.baseRadius;
+                const offsetX = fruitData.offsetX || 0;
+                const offsetY = fruitData.offsetY || 0;
+                
+                // Apply offset to position
+                const bodyX = x + offsetX;
+                const bodyY = y + offsetY;
+                
+                return Bodies.circle(bodyX, bodyY, radius, bodyOptions);
+            }
+
+            function spawnCurrentFruit() {
+                currentFruitLevel = nextFruitLevel;
+                const fruitData = FRUITS[currentFruitLevel];
+                const radius = fruitData.baseRadius; // Game world radius
+                
+                // Convert game world radius to viewport size for preview
+                const viewportRadius = worldToViewportX(radius); // Use X scaling for consistent sizing
+                
+                previewFruitEl.style.width = `${viewportRadius * 2}px`;
+                previewFruitEl.style.height = `${viewportRadius * 2}px`;
+                // Make preview background transparent
+                previewFruitEl.style.backgroundColor = 'transparent';
+                
+                // Use image for preview
+                previewFruitEl.style.backgroundImage = `url('${fruitData.imagePath}')`;
+                // Use 'contain' to preserve aspect ratio
+                previewFruitEl.style.backgroundSize = 'contain';
+                previewFruitEl.style.backgroundPosition = 'center';
+                previewFruitEl.style.backgroundRepeat = 'no-repeat';
+                previewFruitEl.textContent = '';
+                
+                // Convert game world dropAreaY to viewport coordinates
+                const viewportDropAreaY = worldToViewportY(dropAreaY);
+                previewFruitEl.style.top = `${viewportDropAreaY - viewportRadius}px`;
+
+                moveFruit(currentPreviewX, true); 
+            }
+
+            function spawnNextFruit() {
+                nextFruitLevel = Math.floor(Math.random() * STARTING_FRUIT_LEVELS);
+                const fruitData = FRUITS[nextFruitLevel];
+                
+                // Update next fruit image
+                nextFruitImgEl.src = fruitData.imagePath;
+                nextFruitImgEl.style.display = 'block';
+            }
+            
+            // --- Game Controls (for the DIV) ---
+
+            function moveFruit(clientX, isInternalCall = false) {
+                if (isGameOver) return;
+
+                const fruitData = FRUITS[currentFruitLevel];
+                const radius = fruitData.baseRadius; // Game world radius
+                let worldX; // Position in game world coordinates
+
+                if (isInternalCall) {
+                    // clientX is already in game world coordinates
+                    worldX = clientX; 
+                } else {
+                    // Convert viewport coordinates to game world coordinates
+                    const rect = gameWrapper.getBoundingClientRect();
+                    const viewportX = clientX - rect.left;
+                    worldX = viewportToWorldX(viewportX);
+                }
+                
+                // Constrain in game world coordinates
+                const constrainedWorldX = Math.max(
+                    radius + wallThickness,
+                    Math.min(gameWorldWidth - radius - wallThickness, worldX)
+                );
+                
+                currentPreviewX = constrainedWorldX; // Store in game world coordinates
+                
+                // Convert to viewport coordinates for display
+                const viewportX = worldToViewportX(constrainedWorldX);
+                const viewportCenterX = viewportWidth / 2;
+                previewFruitEl.style.transform = `translateX(${viewportX - viewportCenterX}px) translateX(-50%)`;
+            }
+
+            function dropFruit() {
+                if (isGameOver || isDropping) return;
+
+                // Check cooldown period to limit drop frequency
+                const currentTime = Date.now();
+                if (currentTime - lastDropTime < DROP_COOLDOWN_MS) {
+                    return; // Still in cooldown period
+                }
+
+                // Check if any fruits are already resting above the game over line
+                const gameOverLine = world.bodies.find(b => b.label === 'gameOverLine');
+                if (gameOverLine) {
+                    const fruitsAboveLine = Composite.allBodies(world).filter(body => {
+                        if (body.label !== 'fruit') return false;
+                        // Check if fruit is above the line and nearly stationary
+                        const isAboveLine = body.position.y < gameOverLineY;
+                        const isStationary = Math.abs(body.velocity.y) < 0.5 && Math.abs(body.velocity.x) < 0.5;
+                        return isAboveLine && isStationary;
+                    });
+                    
+                    if (fruitsAboveLine.length > 0) {
+                        triggerGameOver();
+                        return;
+                    }
+                }
+
+                isDropping = true;
+                lastDropTime = currentTime; // Record the drop time
+                
+                // Decrement booster cooldown counter
+                if (boosterCooldownCount > 0) {
+                    boosterCooldownCount--;
+                    
+                    // If this was the 5th drop, schedule re-enable after 400ms delay
+                    if (boosterCooldownCount === 0) {
+                        // Clear any existing timeout
+                        if (boosterReenableTimeout) {
+                            clearTimeout(boosterReenableTimeout);
+                        }
+                        // Re-enable booster after 400ms delay
+                        boosterReenableTimeout = setTimeout(() => {
+                            updateBoosterIndicator();
+                            playBoosterAvailableSound(); // Play sound when booster is ready again
+                            boosterReenableTimeout = null;
+                        }, 400);
+                    } else {
+                        updateBoosterIndicator();
+                    }
+                } else {
+                    updateBoosterIndicator();
+                }
+                
+                const droppedFruit = createFruitBody(
+                    currentPreviewX, 
+                    dropAreaY,
+                    currentFruitLevel
+                );
+                
+                if (!droppedFruit) {
+                    isDropping = false;
+                    return;
+                }
+                
+                // Set initial downward velocity after body creation
+                Body.setVelocity(droppedFruit, { x: 0, y: NORMAL_DROP_VELOCITY });
+                
+                // Track this fruit for potential speed boost
+                lastDroppedFruit = droppedFruit;
+                
+                // Update evolution row when a fruit is dropped
+                updateEvolutionRow(currentFruitLevel);
+                
+                World.add(world, droppedFruit);
+                
+                // Play drop sound effect
+                playDropSound();
+                
+                previewFruitEl.style.opacity = '0';
+
+                if (collisionTimeout) clearTimeout(collisionTimeout);
+                collisionTimeout = setTimeout(() => {
+                    if (!isGameOver && droppedFruit && world.bodies.includes(droppedFruit)) {
+                        // Only trigger game over if the fruit's CENTER is above the red line
+                        const isCenterAboveLine = droppedFruit.position.y < gameOverLineY;
+                        const isStationary = Math.abs(droppedFruit.velocity.y) < 0.5 && Math.abs(droppedFruit.velocity.x) < 0.5;
+                        if (isCenterAboveLine && isStationary) {
+                            triggerGameOver();
+                        }
+                    }
+                    collisionTimeout = null;
+                }, 1500);
+
+                spawnTimeout = setTimeout(() => {
+                    if (!isGameOver) {
+                        spawnCurrentFruit(); 
+                        spawnNextFruit(); 
+                        previewFruitEl.style.opacity = '0.8';
+                        isDropping = false;
+                    }
+                    spawnTimeout = null;
+                }, DROP_COOLDOWN_MS); // Show preview fruit only after cooldown completes
+            }
+
+            // --- Confetti Effect ---
+            function createConfetti(worldX, worldY, color1, color2) {
+                // Convert game world coordinates to viewport coordinates
+                const viewportX = worldToViewportX(worldX);
+                const viewportY = worldToViewportY(worldY);
+                
+                const numPieces = 20; // Reduced from 25 for better performance
+                const fragment = document.createDocumentFragment(); // Use fragment for better performance
+                
+                for (let i = 0; i < numPieces; i++) {
+                    const piece = document.createElement('div');
+                    piece.className = 'confetti-piece'; // Use className instead of classList for better performance
+                    
+                    const randomColor = Math.random() < 0.5 ? color1 : color2;
+                    const angle = Math.random() * Math.PI * 2; 
+                    const distance = Math.random() * 70 + 40;
+                    const finalX = viewportX + Math.cos(angle) * distance;
+                    const finalY = viewportY + Math.sin(angle) * distance;
+                    
+                    // Fixed piece size in viewport (not scaled with game world)
+                    const pieceSize = 10;
+                    
+                    // Set all styles at once for better performance
+                    piece.style.cssText = `
+                        background-color: ${randomColor};
+                        width: ${pieceSize}px;
+                        height: ${pieceSize}px;
+                        left: ${viewportX}px;
+                        top: ${viewportY}px;
+                    `;
+                    
+                    fragment.appendChild(piece);
+
+                    // Use requestAnimationFrame for smoother animations
+                    requestAnimationFrame(() => {
+                        requestAnimationFrame(() => {
+                            piece.style.transform = `translate(${finalX - viewportX}px, ${finalY - viewportY}px) scale(0)`;
+                            piece.style.opacity = '0';
+                        });
+                    });
+
+                    setTimeout(() => {
+                        piece.remove();
+                    }, 800);
+                }
+                
+                confettiContainer.appendChild(fragment);
+            }
+            
+            // --- Save Game State ---
+            function saveGameState() {
+                if (isGameOver || !world) return;
+
+                const fruits = Composite.allBodies(world)
+                    .filter(body => body.label === 'fruit')
+                    .map(body => ({
+                        x: body.position.x,
+                        y: body.position.y,
+                        level: body.fruitLevel,
+                        angle: body.angle,
+                        velocityX: body.velocity.x,
+                        velocityY: body.velocity.y,
+                        angularVelocity: body.angularVelocity
+                    }));
+                
+                const gameState = {
+                    fruits: fruits,
+                    score: score,
+                    currentFruitLevel: currentFruitLevel,
+                    nextFruitLevel: nextFruitLevel,
+                    // No need to save boxWidth anymore - game world is fixed size
+                    boosterCooldownCount: boosterCooldownCount, // Save booster cooldown state
+                    boosterUnlocked: boosterUnlocked, // Save booster unlock state
+                    timestamp: Date.now() // Save timestamp for auto-resume feature
+                };
+
+                localStorage.setItem(GAME_STATE_KEY, JSON.stringify(gameState));
+            }
+
+
+            // --- Event Listeners ---
+            function addEventListeners() {
+                Events.off(engine, 'collisionStart');
+                Events.off(engine, 'collisionStay');
+                Events.off(engine, 'afterUpdate');
+                
+                // 1. DETECT collisions
+                Events.on(engine, 'collisionStart', (event) => {
+                    if (isGameOver) return;
+                    const pairs = event.pairs;
+                    for (let i = 0; i < pairs.length; i++) {
+                        const pair = pairs[i];
+                        const bodyA = pair.bodyA;
+                        const bodyB = pair.bodyB;
+
+                        if (bodyA.label !== 'fruit' || bodyB.label !== 'fruit') continue;
+                        
+                        if (bodiesToRemoveSet.has(bodyA.id) || bodiesToRemoveSet.has(bodyB.id)) {
+                            continue;
+                        }
+
+                        if (bodyA.fruitLevel === bodyB.fruitLevel) {
+                            const level = bodyA.fruitLevel;
+                            if (level === MAX_FRUIT_LEVEL) continue; 
+                            
+                            // Prevent merging if both fruits are above the game over line
+                            const bodyAAboveLine = bodyA.position.y < gameOverLineY;
+                            const bodyBAboveLine = bodyB.position.y < gameOverLineY;
+                            if (bodyAAboveLine && bodyBAboveLine) {
+                                continue; // Skip this merge
+                            }
+                            
+                            const newX = (bodyA.position.x + bodyB.position.x) / 2;
+                            const newY = (bodyA.position.y + bodyB.position.y) / 2;
+                            const nextLevel = level + 1;
+                            
+                            bodiesToAddArray.push({
+                                x: newX,
+                                y: newY,
+                                level: nextLevel,
+                                score: FRUITS[level].score,
+                                color1: FRUITS[level].color, 
+                                color2: FRUITS[nextLevel].color
+                            });
+                            bodiesToRemoveSet.add(bodyA.id);
+                            bodiesToRemoveSet.add(bodyB.id);
+                        }
+                    }
+                });
+                
+                // 2. ACT on collisions
+                Events.on(engine, 'afterUpdate', () => {
+                    if (bodiesToRemoveSet.size > 0) {
+                        const bodiesToRemove = Composite.allBodies(world).filter(body => bodiesToRemoveSet.has(body.id));
+                        bodiesToRemove.forEach(body => {
+                            World.remove(world, body);
+                        });
+                        
+                        let didMerge = false; 
+                        bodiesToAddArray.forEach(data => {
+                            const newFruit = createFruitBody(data.x, data.y, data.level);
+                            
+                            // Set initial velocity after body creation
+                            Body.setVelocity(newFruit, { x: Common.random(-1, 1), y: -2 });
+                            
+                            World.add(world, newFruit);
+                            updateScore(score + data.score); 
+                            createConfetti(data.x, data.y, data.color1, data.color2); 
+                            
+                            // Update evolution row when new fruit level is achieved
+                            updateEvolutionRow(data.level);
+                            
+                            didMerge = true;
+                        });
+                        
+                        if (didMerge) {
+                            // Play merge sound effect
+                            playMergeSound();
+                            if (navigator.vibrate) {
+                                navigator.vibrate(50); 
+                            }
+                        }
+
+                        bodiesToRemoveSet.clear();
+                        bodiesToAddArray = [];
+                    }
+                    
+                    // --- Warning Zone Detection ---
+                    if (!isGameOver) {
+                        // Define warning zone as area below red line at 90% of available height
+                        const availableHeight = gameWorldHeight - gameOverLineY; // Height from red line to bottom
+                        const warningLevel = gameOverLineY + (availableHeight * 0.10); // 90% of available height
+                        
+                        // Check if any stationary fruits are in the warning zone
+                        const fruitsInWarningZone = Composite.allBodies(world).filter(body => {
+                            if (body.label !== 'fruit') return false;
+                            
+                            // Check if fruit center is in warning zone (at or above 90% fill level)
+                            const isInWarningZone = body.position.y <= warningLevel;
+                            
+                            // Only count fruits that are relatively stationary
+                            const isRelativelyStationary = Math.abs(body.velocity.y) < 2.0;
+                            
+                            return isInWarningZone && isRelativelyStationary;
+                        });
+                        
+                        // Activate warning if fruits are in the zone
+                        if (fruitsInWarningZone.length > 0) {
+                            if (!isWarningActive) {
+                                isWarningActive = true;
+                            }
+                            // Play warning sound repeatedly while warning is active
+                            // The 2-second cooldown in playWarningSound() ensures proper timing
+                            playWarningSound();
+                        } else {
+                            isWarningActive = false;
+                        }
+                        
+                        // Animate warning line thickness
+                        if (isWarningActive) {
+                            warningAnimationFrame++;
+                            // Pulse between 2 and 8 pixels using a sine wave
+                            const pulseSpeed = 0.15; // Speed of pulsing
+                            warningLineThickness = 5 + 3 * Math.sin(warningAnimationFrame * pulseSpeed);
+                        } else {
+                            warningLineThickness = 2; // Reset to normal thickness
+                            warningAnimationFrame = 0;
+                        }
+                    }
+
+                    if (!isGameOver) {
+                        saveCounter++;
+                        if (saveCounter >= 120) { // Save roughly every 2 seconds (performance optimization)
+                            saveGameState();
+                            saveCounter = 0;
+                        }
+                    }
+                });
+
+                // --- Game Over Check ---
+                Events.on(engine, 'collisionStay', (event) => {
+                    if (isGameOver || collisionTimeout) return; 
+                    const pairs = event.pairs;
+                    for (let i = 0; i < pairs.length; i++) {
+                        const pair = pairs[i];
+                        const bodyA = pair.bodyA;
+                        const bodyB = pair.bodyB;
+                        let fruitBody = null;
+
+                        if (bodyA.label === 'gameOverLine' && bodyB.label === 'fruit') fruitBody = bodyB;
+                        if (bodyB.label === 'gameOverLine' && bodyA.label === 'fruit') fruitBody = bodyA;
+
+                        if (fruitBody) {
+                            // Check if the CENTER of the fruit is above the line (not just touching it)
+                            const isCenterAboveLine = fruitBody.position.y < gameOverLineY;
+                            // Only trigger game over if center is above line AND fruit is stationary
+                            if (isCenterAboveLine && fruitBody.velocity.y < 0.05 && fruitBody.velocity.y > -0.05 && Math.abs(fruitBody.velocity.x) < 0.1) {
+                                triggerGameOver();
+                                break;
+                            }
+                        }
+                    }
+                });
+                
+                // --- UI Event Listeners ---
+                gameWrapper.addEventListener('pointerdown', handlePointerDown, { passive: false });
+                gameWrapper.addEventListener('pointermove', handlePointerMove, { passive: false });
+                gameWrapper.addEventListener('pointerup', handlePointerUp, { passive: false });
+                
+                // Prevent toolbar events from bubbling to game
+                headerEl.addEventListener('pointerdown', stopToolbarEventBubbling, { passive: false });
+                headerEl.addEventListener('pointermove', stopToolbarEventBubbling, { passive: false });
+                headerEl.addEventListener('pointerup', stopToolbarEventBubbling, { passive: false });
+                
+                // Prevent booster indicator and tooltip events from bubbling to game
+                boosterIndicator.addEventListener('pointerdown', stopToolbarEventBubbling, { passive: false });
+                boosterIndicator.addEventListener('pointermove', stopToolbarEventBubbling, { passive: false });
+                boosterIndicator.addEventListener('pointerup', stopToolbarEventBubbling, { passive: false });
+                boosterTooltip.addEventListener('pointerdown', stopToolbarEventBubbling, { passive: false });
+                boosterTooltip.addEventListener('pointermove', stopToolbarEventBubbling, { passive: false });
+                boosterTooltip.addEventListener('pointerup', stopToolbarEventBubbling, { passive: false });
+                
+                restartButton.addEventListener('click', handleRestart);
+                shareButton.addEventListener('click', handleShare);
+                restartMenuButton.addEventListener('click', handleRestartFromMenu);
+                restartConfirmYes.addEventListener('click', confirmRestart);
+                restartConfirmNo.addEventListener('click', cancelRestart);
+                burgerMenuButton.addEventListener('click', togglePauseMenu);
+                resumeButton.addEventListener('click', togglePauseMenu);
+                musicToggle.addEventListener('click', toggleMusic);
+                soundsToggle.addEventListener('click', toggleSounds);
+                boosterIndicator.addEventListener('click', toggleBoosterTooltip);
+            }
+            
+            // --- Helper to check if any modal is visible ---
+            function isModalVisible() {
+                return !pauseModal.classList.contains('hidden') || 
+                       !gameOverModal.classList.contains('hidden') || 
+                       !restartConfirmModal.classList.contains('hidden');
+            }
+            
+            // --- Event Handlers (to allow removal) ---
+            function handlePointerDown(e) { 
+                if (isGameOver || isGameOverAnimating || isModalVisible()) return;
+                e.preventDefault(); 
+                moveFruit(e.clientX); 
+            }
+            function handlePointerMove(e) { 
+                if (isGameOver || isGameOverAnimating || isModalVisible()) return;
+                e.preventDefault(); 
+                moveFruit(e.clientX); 
+            }
+            function handlePointerUp(e) { 
+                if (isGameOver || isGameOverAnimating || isModalVisible()) return;
+                e.preventDefault(); 
+                
+                const currentTime = Date.now();
+                const timeSinceLastDrop = currentTime - lastDropTime;
+                
+                // Check if we're in the speed boost window (within 200ms of cooldown) and booster is available
+                if (timeSinceLastDrop < SPEED_BOOST_WINDOW && 
+                    lastDroppedFruit && 
+                    world.bodies.includes(lastDroppedFruit) &&
+                    boosterCooldownCount === 0 &&
+                    boosterReenableTimeout === null &&
+                    boosterUnlocked) {
+                    // Boost the most recently dropped fruit's speed to 3x
+                    Body.setVelocity(lastDroppedFruit, { 
+                        x: lastDroppedFruit.velocity.x, 
+                        y: BOOSTED_DROP_VELOCITY 
+                    });
+                    // Play sound when booster is used
+                    playBoosterUsedSound();
+                    // Clear the reference so we don't boost again
+                    lastDroppedFruit = null;
+                    // Activate cooldown for next 5 drops
+                    boosterCooldownCount = BOOSTER_COOLDOWN_DROPS;
+                    updateBoosterIndicator();
+                } else {
+                    // Normal drop
+                    dropFruit(); 
+                }
+            }
+            
+            // --- Prevent toolbar pointer events from bubbling ---
+            function stopToolbarEventBubbling(e) {
+                e.stopPropagation();
+            }
+            
+            // --- Toggle Pause Menu ---
+            function togglePauseMenu() {
+                const isHidden = pauseModal.classList.contains('hidden');
+                
+                if (isHidden) {
+                    // Show pause menu
+                    hideBoosterTooltip(); // Hide tooltip when opening pause menu
+                    pauseModal.classList.remove('hidden');
+                    // Update button text
+                    if (localStorage.getItem(GAME_STATE_KEY) && !isGameOver) {
+                        resumeButton.textContent = 'Resume';
+                        restartMenuButton.classList.remove('hidden');
+                    } else {
+                        resumeButton.textContent = 'Start';
+                        restartMenuButton.classList.add('hidden');
+                    }
+                    // Pause music if playing
+                    if (bgmController && bgmController.isPlaying()) {
+                        bgmController.pause();
+                    }
+                } else {
+                    // Hide pause menu
+                    pauseModal.classList.add('hidden');
+                    
+                    // Initialize background music on first interaction if not already done
+                    if (!bgmController) {
+                        initBackgroundMusic();
+                    }
+                    
+                    // Resume/start music if enabled and not game over
+                    if (isMusicEnabled && !isGameOver) {
+                        isMusicPaused = false;
+                        startBackgroundMusic();
+                    }
+                }
+            }
+            
+            // --- Toggle Music ---
+            function toggleMusic() {
+                isMusicEnabled = !isMusicEnabled;
+                musicStatus.textContent = isMusicEnabled ? 'On' : 'Off';
+                
+                // Save preference to localStorage
+                saveAudioPreferences();
+                
+                if (isMusicEnabled) {
+                    // Enable music - start playing if not in pause menu and not game over
+                    if (pauseModal.classList.contains('hidden') && !isGameOver) {
+                        startBackgroundMusic();
+                    }
+                } else {
+                    // Disable music - stop if playing
+                    if (bgmController && bgmController.isPlaying()) {
+                        bgmController.pause();
+                    }
+                }
+            }
+            
+            // --- Toggle Sounds ---
+            function toggleSounds() {
+                areSoundsEnabled = !areSoundsEnabled;
+                soundsStatus.textContent = areSoundsEnabled ? 'On' : 'Off';
+                
+                // Save preference to localStorage
+                saveAudioPreferences();
+            }
+            
+            
+            // --- Restart from Pause Menu ---
+            function handleRestartFromMenu() {
+                // Close pause menu first
+                pauseModal.classList.add('hidden');
+                // Show confirmation modal
+                restartConfirmModal.classList.remove('hidden');
+            }
+            
+            function showRestartConfirmation() {
+                if (!isGameOver) {
+                    restartConfirmModal.classList.remove('hidden');
+                }
+            }
+            
+            function confirmRestart() {
+                restartConfirmModal.classList.add('hidden');
+                handleRestart();
+            }
+            
+            function cancelRestart() {
+                restartConfirmModal.classList.add('hidden');
+            }
+            
+            // --- Handle Share ---
+            function handleShare() {
+                const gameUrl = 'https://miklbg.github.io/merge_game/';
+                const shareText = `I scored ${score} points in Fruit Merge! Can you beat my score? Play here: ${gameUrl}`;
+                
+                // Helper function to show temporary feedback
+                function showShareFeedback(message) {
+                    const shareTextSpan = shareButton.querySelector('span');
+                    const originalText = shareTextSpan.textContent;
+                    shareTextSpan.textContent = message;
+                    setTimeout(() => {
+                        shareTextSpan.textContent = originalText;
+                    }, 2000);
+                }
+                
+                // Try to use the Web Share API if available
+                if (navigator.share) {
+                    navigator.share({
+                        title: 'Fruit Merge - My Score',
+                        text: shareText,
+                        url: gameUrl
+                    }).catch((error) => {
+                        // User cancelled share or error occurred, silently ignore
+                        console.log('Share cancelled or failed:', error);
+                    });
+                } else {
+                    // Fallback: Copy to clipboard
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                        navigator.clipboard.writeText(shareText).then(() => {
+                            showShareFeedback('Copied!');
+                        }).catch((error) => {
+                            console.error('Failed to copy to clipboard:', error);
+                            showShareFeedback('Failed to copy');
+                        });
+                    } else {
+                        // Last resort: alert with the text to copy
+                        alert('Copy this text to share your score:\n\n' + shareText);
+                    }
+                }
+            }
+            
+            function handleRestart() {
+                // Prevent restart during game over animation
+                if (isGameOverAnimating) {
+                    return;
+                }
+                
+                localStorage.removeItem(GAME_STATE_KEY);
+                
+                // Reset game over modal visibility states
+                gameOverModal.classList.add('hidden');
+                gameOverText.classList.remove('visible');
+                gameOverContent.classList.remove('visible');
+                
+                // Stop background music before restart
+                stopBackgroundMusic();
+                
+                // Extra safety: clear music fade interval if it exists
+                if (musicFadeInterval) {
+                    clearInterval(musicFadeInterval);
+                    musicFadeInterval = null;
+                }
+                
+                // Clear collision timeout if it exists
+                if (collisionTimeout) {
+                    clearTimeout(collisionTimeout);
+                    collisionTimeout = null;
+                }
+                
+                // Clear spawn timeout if it exists
+                if (spawnTimeout) {
+                    clearTimeout(spawnTimeout);
+                    spawnTimeout = null;
+                }
+                
+                // Clear all game over timeouts if they exist
+                gameOverTimeouts.forEach(timeout => clearTimeout(timeout));
+                gameOverTimeouts = [];
+                
+                // Clear the game over animation flag
+                isGameOverAnimating = false;
+                
+                // Clear booster reenable timeout if it exists
+                if (boosterReenableTimeout) {
+                    clearTimeout(boosterReenableTimeout);
+                    boosterReenableTimeout = null;
+                }
+                
+                Runner.stop(runner);
+                Render.stop(render);
+                gameWrapper.removeEventListener('pointerdown', handlePointerDown);
+                gameWrapper.removeEventListener('pointermove', handlePointerMove);
+                gameWrapper.removeEventListener('pointerup', handlePointerUp);
+                headerEl.removeEventListener('pointerdown', stopToolbarEventBubbling);
+                headerEl.removeEventListener('pointermove', stopToolbarEventBubbling);
+                headerEl.removeEventListener('pointerup', stopToolbarEventBubbling);
+                boosterIndicator.removeEventListener('pointerdown', stopToolbarEventBubbling);
+                boosterIndicator.removeEventListener('pointermove', stopToolbarEventBubbling);
+                boosterIndicator.removeEventListener('pointerup', stopToolbarEventBubbling);
+                boosterTooltip.removeEventListener('pointerdown', stopToolbarEventBubbling);
+                boosterTooltip.removeEventListener('pointermove', stopToolbarEventBubbling);
+                boosterTooltip.removeEventListener('pointerup', stopToolbarEventBubbling);
+                restartButton.removeEventListener('click', handleRestart);
+                shareButton.removeEventListener('click', handleShare);
+                restartMenuButton.removeEventListener('click', handleRestartFromMenu);
+                restartConfirmYes.removeEventListener('click', confirmRestart);
+                restartConfirmNo.removeEventListener('click', cancelRestart);
+                burgerMenuButton.removeEventListener('click', togglePauseMenu);
+                resumeButton.removeEventListener('click', togglePauseMenu);
+                musicToggle.removeEventListener('click', toggleMusic);
+                soundsToggle.removeEventListener('click', toggleSounds);
+                Events.off(engine);
+                Events.off(render);
+                World.clear(world, false);
+                Composite.clear(world, false, true);
+                Engine.clear(engine);
+                if (render.canvas) {
+                    render.canvas.remove();
+                }
+                
+                // Clear any remaining confetti pieces
+                confettiContainer.innerHTML = '';
+                
+                // Reset preview fruit visibility
+                previewFruitEl.style.opacity = '0.8';
+                
+                // Re-enable pointer events for new game
+                gameWrapper.style.pointerEvents = 'auto';
+                
+                initGame(); 
+            }
+
+            
+            // --- Utility Functions ---
+            function updateScore(newScore) {
+                score = newScore;
+                scoreEl.textContent = score;
+
+                if (score > highScore) {
+                    highScore = score;
+                    highScoreEl.textContent = highScore;
+                }
+            }
+            
+            function triggerGameOver() {
+                if (isGameOver) return; 
+                isGameOver = true;
+                isGameOverAnimating = true; // Set animation flag to block all interactions
+                
+                // Hide tooltip when game over occurs
+                hideBoosterTooltip();
+                
+                // Disable pointer events immediately to prevent any interactions during animation
+                gameWrapper.style.pointerEvents = 'none';
+                
+                // Play game over sound effect
+                playGameOverSound();
+                
+                // Fade out background music
+                stopBackgroundMusic();
+
+                // Remove the bottom wall to let fruits fall
+                const groundWall = Composite.allBodies(world).find(body => body.label === 'ground');
+                if (groundWall) {
+                    World.remove(world, groundWall);
+                }
+                
+                // Show the game over modal container (without content visible yet)
+                gameOverModal.classList.remove('hidden');
+                
+                // Immediately fade in the "Game Over" text while fruits are falling
+                gameOverTimeouts.push(setTimeout(() => {
+                    gameOverText.classList.add('visible');
+                }, 50));
+                
+                // Let the fruits fall for 2 seconds, then show modal content
+                gameOverTimeouts.push(setTimeout(() => {
+                    finalScoreEl.textContent = score;
+
+                    localStorage.setItem(HIGHSCORE_KEY, highScore.toString());
+                    localStorage.removeItem(GAME_STATE_KEY);
+
+                    // Fade in the modal background, score, and restart button
+                    gameOverContent.classList.add('visible');
+                    
+                    // Re-enable pointer events and clear animation flag ONLY after content is visible
+                    // This ensures the restart button can be clicked only when fully shown
+                    isGameOverAnimating = false;
+                    gameWrapper.style.pointerEvents = 'auto';
+                }, 2000));
+                
+                // Keep the game running for a few more seconds to ensure all fruits fall off screen
+                gameOverTimeouts.push(setTimeout(() => {
+                    Runner.stop(runner);
+                }, 5000));
+            }
+
+            // --- Handle Window Resize ---
+            function handleResize(newWidth, newHeight) {
+                if (!newWidth || !newHeight) {
+                    return;
+                }
+                
+                // With CSS Grid and aspect-ratio, just read the actual dimensions
+                const newViewportWidth = canvasWrapper.clientWidth;
+                const newViewportHeight = canvasWrapper.clientHeight;
+                
+                if (newViewportWidth === viewportWidth && newViewportHeight === viewportHeight) {
+                    return; // No change
+                }
+                
+                viewportWidth = newViewportWidth;
+                viewportHeight = newViewportHeight;
+                headerHeight = headerEl.clientHeight;
+                
+                // Update the canvas dimensions - keep at game world size, let CSS scale
+                if (render && render.canvas) {
+                    // Canvas internal size stays at game world dimensions
+                    render.canvas.width = gameWorldWidth;
+                    render.canvas.height = gameWorldHeight;
+                    render.options.width = gameWorldWidth;
+                    render.options.height = gameWorldHeight;
+                    // Keep bounds fixed to game world size
+                    render.bounds.min.x = 0;
+                    render.bounds.min.y = 0;
+                    render.bounds.max.x = gameWorldWidth;
+                    render.bounds.max.y = gameWorldHeight;
+                }
+                
+                // Update preview fruit position and size (no need to scale position - it's in game world coords)
+                if (!isGameOver && !isDropping) {
+                    spawnCurrentFruit();
+                }
+                
+                // Update booster indicator position after resize
+                updateBoosterIndicatorPosition();
+                
+                // No need to save game state on resize - game world is unchanged
+            }
+            
+            function setupResizeObserver() {
+                const resizeObserver = new ResizeObserver(entries => {
+                    for (let entry of entries) {
+                        if (entry.target === gameWrapper) {
+                            const newWidth = entry.contentRect.width;
+                            const newHeight = entry.contentRect.height;
+                            
+                            // Handle resize without reinitializing
+                            handleResize(newWidth, newHeight);
+                        } else if (entry.target === fruitEvolutionRow) {
+                            // Rescale icons when row size changes
+                            scaleEvolutionIcons();
+                        }
+                    }
+                });
+                
+                resizeObserver.observe(gameWrapper);
+                resizeObserver.observe(fruitEvolutionRow);
+            }
+            
+            // --- Handle Page Visibility/Focus Changes ---
+            function setupVisibilityHandlers() {
+                // Handle page visibility changes (tab switching)
+                document.addEventListener('visibilitychange', () => {
+                    if (document.hidden) {
+                        // Page lost focus/visibility
+                        hideBoosterTooltip(); // Hide tooltip when page loses focus
+                        if (bgmController && bgmController.isPlaying()) {
+                            bgmController.pause();
+                            isMusicPaused = true;
+                        }
+                    } else {
+                        // Page gained focus/visibility
+                        if (isMusicEnabled && pauseModal.classList.contains('hidden') && !isGameOver) {
+                            resumeBackgroundMusic();
+                        }
+                    }
+                });
+                
+                // Handle window focus/blur events (app switching)
+                window.addEventListener('blur', () => {
+                    hideBoosterTooltip(); // Hide tooltip when window loses focus
+                    if (bgmController && bgmController.isPlaying()) {
+                        bgmController.pause();
+                        isMusicPaused = true;
+                    }
+                });
+                
+                window.addEventListener('focus', () => {
+                    if (isMusicEnabled && pauseModal.classList.contains('hidden') && !isGameOver) {
+                        resumeBackgroundMusic();
+                    }
+                });
+            }
+            
+            // --- Setup Pause Modal ---
+            function setupPauseModal() {
+                // Check if saved game exists and if it's recent (less than 20 seconds old)
+                const savedStateString = localStorage.getItem(GAME_STATE_KEY);
+                let shouldAutoResume = false;
+                
+                if (savedStateString) {
+                    try {
+                        const savedState = JSON.parse(savedStateString);
+                        const currentTime = Date.now();
+                        const savedTimestamp = savedState.timestamp || 0;
+                        const timeDifference = currentTime - savedTimestamp;
+                        
+                        if (timeDifference < 20000 && timeDifference >= 0) {
+                            shouldAutoResume = true;
+                        }
+                    } catch (e) {
+                    }
+                }
+                
+                // Set initial button text based on saved game
+                if (savedStateString) {
+                    resumeButton.textContent = 'Resume';
+                    restartMenuButton.classList.remove('hidden');
+                } else {
+                    resumeButton.textContent = 'Start';
+                    restartMenuButton.classList.add('hidden');
+                }
+                
+                // Initialize audio toggle states from loaded preferences
+                musicStatus.textContent = isMusicEnabled ? 'On' : 'Off';
+                soundsStatus.textContent = areSoundsEnabled ? 'On' : 'Off';
+                
+                if (shouldAutoResume) {
+                    pauseModal.classList.add('hidden');
+                    
+                    // Initialize background music on auto-resume if not already done
+                    if (!bgmController) {
+                        initBackgroundMusic();
+                    }
+                    
+                    // Start music if enabled
+                    if (isMusicEnabled && !isGameOver) {
+                        isMusicPaused = false;
+                        startBackgroundMusic();
+                    }
+                } else {
+                    // Modal is visible by default on first load
+                    // The togglePauseMenu function handles showing/hiding and music control
+                }
+            }
+        
+        }; // End of window.onload
+    </script>
+    
+    <!-- Service Worker Registration -->
+    <script>
+        // Register Service Worker for PWA support
+        if ('serviceWorker' in navigator) {
+            let refreshing = false;
+            
+            // Reload page when new service worker takes control
+            navigator.serviceWorker.addEventListener('controllerchange', () => {
+                if (refreshing) return;
+                refreshing = true;
+                console.log('New service worker activated, reloading page...');
+                window.location.reload();
+            });
+            
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js')
+                    .then(registration => {
+                        console.log('ServiceWorker registered:', registration.scope);
+                        
+                        // Check for updates every 60 seconds
+                        setInterval(() => {
+                            registration.update();
+                        }, 60000);
+                        
+                        // Check for updates when page becomes visible
+                        document.addEventListener('visibilitychange', () => {
+                            if (!document.hidden) {
+                                registration.update();
+                            }
+                        });
+                        
+                        // Listen for update found
+                        registration.addEventListener('updatefound', () => {
+                            const newWorker = registration.installing;
+                            
+                            newWorker.addEventListener('statechange', () => {
+                                if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                                    // New service worker available
+                                    console.log('New content is available, refresh the page to update');
+                                    
+                                    // Automatically activate the new service worker
+                                    newWorker.postMessage({ type: 'SKIP_WAITING' });
+                                }
+                            });
+                        });
+                    })
+                    .catch(err => {
+                        console.log('ServiceWorker registration failed:', err);
+                    });
+                
+                // Listen for messages from service worker
+                navigator.serviceWorker.addEventListener('message', event => {
+                    if (event.data && event.data.type === 'SW_UPDATED') {
+                        console.log('Service Worker updated to version:', event.data.version);
+                    }
+                });
+            });
+        }
+    </script>
+</body>
+</html>
